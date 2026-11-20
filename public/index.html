@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#151b17">
+  <meta name="description" content="Cryptid County is a hidden-movement strategy game for two or three hunters and one Cryptid.">
+  <title>Cryptid County</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header id="game-topbar" class="topbar" hidden>
+    <div class="shell topbar-inner">
+      <a href="/" class="brand" aria-label="Cryptid County home"><span class="brand-icon" aria-hidden="true">✦</span><span>Cryptid County</span></a>
+      <div class="topbar-actions">
+        <button type="button" id="switch-player" class="text-button" hidden>Pass device</button>
+        <button type="button" id="settings-open" class="text-button" hidden>Settings</button>
+        <button type="button" id="guide-open" class="text-button"><span aria-hidden="true">▤</span> Field guide</button>
+      </div>
+    </div>
+  </header>
+  <main>
+    <section id="title-screen" class="title-screen" aria-labelledby="title-name">
+      <div class="shell title-inner">
+        <div class="title-sign">
+          <div class="sign-plate">
+            <h1 id="title-name" class="title-wordmark"><span>Cryptid</span> <span class="sign-county">County</span></h1>
+            <div class="sign-tape" aria-hidden="true"><canvas class="sign-static"></canvas></div>
+          </div>
+          <div class="sign-fog" aria-hidden="true"></div>
+        </div>
+        <div id="menu-panel" class="menu-panel">
+          <div class="menu-tabs" role="tablist" aria-label="Main menu">
+            <button type="button" id="play-tab" role="tab" data-menu="play" aria-selected="true" aria-controls="play-panel">Play</button>
+            <button type="button" id="settings-tab" role="tab" data-menu="settings" aria-selected="false" aria-controls="settings-panel" tabindex="-1">Settings</button>
+            <button type="button" id="guide-tab" role="tab" data-menu="guide" aria-selected="false" aria-controls="guide-panel" tabindex="-1">Field guide</button>
+          </div>
+          <div id="play-panel" role="tabpanel" aria-labelledby="play-tab">
+            <div id="menu-content" class="menu-content">
+              <p class="hint" id="menu-loading" hidden>Rejoining your expedition…</p>
+              <aside id="side" class="card side" aria-label="Expedition controls"></aside>
+            </div>
+            <div id="lobby-actions" class="lobby-actions" hidden>
+              <button type="button" id="lobby-pass" class="secondary full">Pass device</button>
+            </div>
+          </div>
+          <div id="settings-panel" class="menu-settings" role="tabpanel" aria-labelledby="settings-tab" hidden></div>
+          <div id="guide-panel" class="menu-guide" role="tabpanel" aria-labelledby="guide-tab" tabindex="0" hidden></div>
+        </div>
+        <p class="title-meta">3-4 player hidden-movement game</p>
+      </div>
+    </section>
+    <div id="game-screen" class="shell" hidden>
+    <section class="intro" aria-labelledby="page-title">
+      <div><p class="eyebrow"><span class="signal" aria-hidden="true"></span> <span id="phase-caption">Expedition headquarters</span></p>
+        <h1 id="page-title">Cryptid County</h1>
+        <p id="subtitle">A hidden-movement hunt for two or three hunters and one Cryptid.</p>
+      </div>
+      <div id="match-stats" class="stats"></div>
+    </section>
+    <div class="dashboard">
+      <div class="map-stack">
+        <section class="card map-card" aria-labelledby="map-title">
+          <div class="map-header">
+            <div><p class="eyebrow">Field map</p><h2 id="map-title">Blackwater County</h2></div>
+            <div class="compass" aria-hidden="true"><span>N</span><i></i></div>
+          </div>
+          <div class="atlas">
+            <div class="columns" aria-hidden="true"><span>A</span><span>B</span><span>C</span><span>D</span><span>E</span><span>F</span><span>G</span></div>
+            <div class="rows" aria-hidden="true"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span></div>
+            <div class="board">
+              <canvas id="landscape" aria-hidden="true"></canvas>
+              <div id="tiles" class="tiles" aria-label="County sectors"></div>
+            </div>
+          </div>
+          <div class="map-footer">
+            <div class="legend" aria-label="Terrain legend">
+              <span><i data-map-icon="woodland" class="forest"></i>Woodland</span>
+              <span><i data-map-icon="meadow" class="meadow"></i>Clearing</span>
+              <span><i data-map-icon="marsh" class="marsh"></i>Wetland</span>
+              <span><i data-map-icon="ridge" class="ridge"></i>Rocky hills</span>
+            </div>
+            <span id="evidence-key" class="evidence-key" hidden><i class="marker evidence" data-map-icon="evidence" aria-hidden="true"></i>Discovered evidence</span>
+            <div class="route-key"><i></i> Traversable route</div>
+          </div>
+          <section id="sector-card" class="sector-card" aria-labelledby="sector-title" hidden>
+            <div class="sector-header">
+              <span id="sector-emblem" class="sector-emblem" aria-hidden="true"></span>
+              <div>
+                <div class="sector-meta"><span id="sector-code"></span><span id="sector-terrain"></span></div>
+                <h3 id="sector-title"></h3>
+              </div>
+            </div>
+            <p id="sector-description" class="sector-description"></p>
+            <div class="sector-trails">
+              <span class="sector-label">Connected trails</span>
+              <ul id="sector-routes" class="sector-routes"></ul>
+            </div>
+            <ul id="sector-contacts" class="sector-contacts" aria-label="Known activity in this sector"></ul>
+          </section>
+        </section>
+        <section id="journal" class="card journal" hidden aria-label="Field notebook"></section>
+      </div>
+    </div>
+    </div>
+  </main>
+  <dialog id="settings-dialog" aria-labelledby="settings-title">
+    <div class="dialog-heading"><h2 id="settings-title">Settings</h2><form method="dialog"><button class="icon-button" aria-label="Close settings">×</button></form></div>
+    <div id="settings-content"></div>
+  </dialog>
+  <dialog id="guide" aria-labelledby="guide-title">
+    <div class="dialog-heading"><div><p class="eyebrow">Cryptid County</p><h2 id="guide-title">Field guide</h2></div><form method="dialog"><button class="icon-button" aria-label="Close guide">×</button></form></div>
+    <div id="guide-dialog-content"></div>
+    <form method="dialog"><button class="primary">Back to the map</button></form>
+  </dialog>
+  <template id="guide-content">
+    <div class="guide-body">
+      <h3>Start an expedition</h3>
+      <p>Create a lobby and share its invite with players on the same network. Each player picks Random, Hunter, or Cryptid. The host can launch with three or four players. The Cryptid chooses a species and each hunter picks an unused class. For one device, choose Pass and play.</p>
+      <h3>Hunters</h3>
+      <p>Start by spending the shared $2,000 treasury at the camp shop. Everyone has two actions and can act in any order. Search for clues, wildlife, and the Cryptid. Search saves evidence photos in your inventory with estimated sale values. Restrain the Cryptid, then spend one action to Capture in its space.</p>
+      <p>When a sighted Cryptid moves, its last-known marker shows where it went. Enter that sector to confirm it automatically if it is still there. You can use one action to follow and one to fire, then a teammate can move in and capture. Use camp and tents to submit evidence and transfer gear even after spending both actions. Only camp buys meat and sells gear.</p>
+      <p>A Search without evidence saves a $25 photo of your team, gear, or surroundings. Enter a tile to collect waiting video tapes and photograph broken equipment. A snare alert marks the tile. Enter it to reveal anything still caught there.</p>
+      <p>Animal tags show a wildlife signal. After feeding, the tag may stay with the remains or travel with the Cryptid through its next turn. The first hunter to enter the tile where a tag was passed gets a scat photo.</p>
+      <p>The Park Ranger can deploy or recover two trail blockades for 1 AP each. A blockade closes one connection to the Cryptid until recovered or destroyed. The Trail Biker can ride two connected tiles in a straight line for 1 AP once per round. The Prepper brings a loaded netgun, four equipment slots, and $200 for the team. The True Believer identifies fake tracks and earns 25% more on photos and tapes.</p>
+      <p>The Trapper starts with three snares and can deploy one carried snare in their sector for 0 AP each round, even after spending both actions.</p>
+      <h3>Cryptid</h3>
+      <p>After every hunter ends their turn, wildlife moves and you get two actions. Eat wildlife to manage hunger, or feed on a charge growth to power your species ability. Mothman can fly two sectors, Sasquatch can sense nearby equipment, and Bigfoot can set snares that take hunters one action to escape.</p>
+      <p>The expedition pays upkeep once per round. Survive until its funds run out. If you finish your turn at maximum hunger, each hunter receives a bearing toward you.</p>
+      <h3>Reading the map</h3>
+      <p>Dashed lines between sectors are legal routes. Amber dashed rings mark reachable sectors during your turn. Solid unit markers are live. Outlined unit markers show a last-known position or remembered equipment. Magnifying glasses mark discovered evidence on the hunter map. Select a sector to see its clues.</p>
+    </div>
+  </template>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <template id="setup-template">
+    <div class="segments setup-modes" aria-label="Lobby setup">
+      <button type="button" data-mode="create">Host</button><button type="button" data-mode="join">Join</button><button type="button" data-mode="local">Pass and play</button>
+    </div>
+    <form id="room-form">
+      <label for="callsign">Callsign</label><input id="callsign" name="name" autocomplete="nickname" maxlength="24" placeholder="Enter a callsign">
+      <label for="room-code" class="join-only">Room code</label><input id="room-code" class="join-only code-input" name="code" autocapitalize="characters" autocomplete="off" maxlength="6" placeholder="6-character code">
+      <label for="party-size" class="local-only">Players on this device</label>
+      <select id="party-size" class="local-only" name="playerCount"><option value="3">3 players</option><option value="4">4 players</option></select>
+      <div class="form-actions">
+        <button type="submit" class="primary" id="room-submit">Create lobby</button>
+      </div>
+      <p class="form-error" id="room-error" role="alert" hidden></p>
+    </form>
+  </template>
+</body>
+</html>
