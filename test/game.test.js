@@ -656,8 +656,9 @@ test('destroying a tent drops its carcasses and consuming one cannot pay twice',
   assert.throws(() => doAction(state, 'c', 'feed', animal.id), RuleError)
 })
 
-test('camera records behavior and reveals only an anonymous active alert until retrieval', () => {
+test('camera shows current occupants, keeps a last sighting, and still requires footage retrieval', () => {
   const state = game()
+  equip(state.hunters[0], 'netgun')
   equip(state.hunters[1], 'camera')
   state.cryptid.pos = CAMP
   const rabbit = state.animals[0]
@@ -665,19 +666,79 @@ test('camera records behavior and reveals only an anonymous active alert until r
   doAction(state, 'b', 'deploy', 'camera')
   const view = matchView(state, 'a')
   assert.equal(view.devices[0].activated, 1)
-  assert.equal(view.cryptid, null)
+  assert.deepEqual(view.cryptid, { pos: CAMP, live: true, restrained: false, name: 'Sasquatch' })
+  assert.ok(view.animals.some(animal => animal.id === rabbit.id && animal.live))
+  assert.ok(view.actions.some(action => action.type === 'hunt' && action.target === rabbit.id))
+  assert.ok(view.actions.some(action => action.type === 'shoot'))
+  assert.equal(view.player.digital.length, 0)
   assert.equal(Object.hasOwn(view.devices[0], 'occupants'), false)
   cryptidPhase(state)
   doAction(state, 'c', 'mislead', 'E')
   rabbit.pos = 'C7'
   doAction(state, 'c', 'move', 'E7')
-  assert.equal(matchView(state, 'a').devices[0].activated, null)
+  const after = matchView(state, 'a')
+  assert.equal(after.devices[0].activated, null)
+  assert.deepEqual(after.cryptid, { pos: CAMP, round: 1, live: false, name: 'Sasquatch' })
+  assert.ok(!after.animals.some(animal => animal.id === rabbit.id))
+  assert.ok(!after.clues.some(clue => clue.type === 'tracks'))
   doAction(state, 'a', 'move', 'C7')
   doAction(state, 'a', 'move', CAMP)
   const tapes = matchView(state, 'a').player.digital
   assert.deepEqual(tapes.map(item => [item.type, item.video, item.value]),
     [['animalVideo', true, 25], ['cryptidVideo', true, 135], ['behaviorVideo', true, 220]])
   assert.deepEqual(state.devices[0].recordings, [])
+})
+
+test('a camera records a same-turn pass-through at the camera while a detector stays anonymous', () => {
+  const state = game()
+  state.animals = []
+  state.cryptid.pos = 'D6'
+  const camera = device('camera', 'D5')
+  const detector = device('detector', 'D4')
+  state.devices.push(camera, detector)
+  cryptidPhase(state)
+  doAction(state, 'c', 'move', 'D5')
+  assert.equal(matchView(state, 'a').cryptid.live, true)
+  doAction(state, 'c', 'move', 'D4')
+  const view = matchView(state, 'b')
+  assert.equal(detector.activated, 1)
+  assert.equal(camera.activated, null)
+  assert.deepEqual(view.cryptid, { pos: 'D5', round: 1, live: false, name: 'Sasquatch' })
+  assert.deepEqual(camera.recordings.map(tape => tape.type), ['cryptidVideo'])
+})
+
+test('losing the last camera in a tile ends a camera-only sighting', () => {
+  const state = game()
+  state.cryptid.pos = 'D6'
+  const first = device('camera', 'D5')
+  const second = device('camera', 'D5')
+  state.devices.push(first, second)
+  cryptidPhase(state)
+  doAction(state, 'c', 'move', 'D5')
+  doAction(state, 'c', 'destroy', first.id)
+  assert.equal(matchView(state, 'a').cryptid.live, true)
+  cryptidPhase(state)
+  doAction(state, 'c', 'destroy', second.id)
+  const view = matchView(state, 'a')
+  assert.deepEqual(view.cryptid, { pos: 'D5', round: 2, live: false, name: 'Sasquatch' })
+  assert.ok(view.devices.every(item => item.activated == null))
+})
+
+test('hunter map highlights the newest active clue round without hiding clue history', () => {
+  const state = game()
+  state.round = 10
+  const discovery = { round: 10, exact: false }
+  const old = evidence('tracks', 'D5', 6, { discovery })
+  const expired = evidence('tracks', 'D4', 3, { discovery })
+  const recent = evidence('tracks', 'D6', 9, { discovery })
+  const sameRound = evidence('feed', CAMP, 9, { discovery })
+  const collected = evidence('feed', 'C7', 10, { discovery, collected: true })
+  const hidden = evidence('tracks', 'E7', 10)
+  state.clues.push(old, expired, recent, sameRound, collected, hidden)
+  const { clues } = matchView(state, 'a')
+  assert.deepEqual(clues.filter(clue => clue.onMap).map(clue => clue.id), [sameRound.id, recent.id])
+  assert.deepEqual(clues.map(clue => clue.id), [collected.id, sameRound.id, recent.id, expired.id, old.id])
+  assert.equal(clues.find(clue => clue.id === old.id).date, 'Cold')
 })
 
 test('a snare alerts anonymously until an arriving hunter confirms and captures its Cryptid', () => {

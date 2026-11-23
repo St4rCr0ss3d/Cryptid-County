@@ -574,7 +574,7 @@ function renderMap(match) {
     }
     if (match?.cryptid?.pos === id) {
       const { name, live, restrained } = match.cryptid
-      units.push(mark(name === 'Mothman' ? 'moth' : 'footprint',
+      units.unshift(mark(name === 'Mothman' ? 'moth' : 'footprint',
         name + (live ? restrained ? ' (restrained)' : ' (live)' : ' (last known)'), 'cryptid', { last: !live, alert: restrained }))
     }
     for (const animal of match?.animals.filter(item => item.pos === id) ?? []) {
@@ -606,8 +606,9 @@ function renderMap(match) {
       selectedMarkers = [...units, ...clues.map(clue =>
         mark('evidence', clue.name + ' · ' + clue.date, 'evidence'))]
     }
-    if (clues.length) {
-      const label = clues.length === 1 ? 'Evidence · ' + clues[0].name : clues.length + ' discovered clues'
+    const mapClues = clues.filter(clue => clue.onMap)
+    if (mapClues.length) {
+      const label = mapClues.length === 1 ? 'Evidence · ' + mapClues[0].name : mapClues.length + ' recent clues'
       units.unshift(mark('evidence', label, 'evidence'))
     }
     const markers = tile.querySelector('.markers')
