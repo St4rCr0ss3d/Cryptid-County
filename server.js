@@ -4,19 +4,20 @@ import { readFile } from 'node:fs/promises'
 import { networkInterfaces } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { createMatch, act, RuleError } from './lib/game.js'
-import { matchView } from './lib/view.js'
-import { MAP, GEAR, SIZE, CRYPTIDS, HUNTER_CLASSES } from './lib/config.js'
+import { matchView, searchView } from './lib/view.js'
+import { MAP, GEAR, SIZE, CRYPTIDS, HUNTER_CLASSES, FACTIONS, classesFor } from './lib/config.js'
 
 const alphabet = 'ACDEFGHJKMNPQRTUVWXY346789'
 const speciesOptions = Object.keys(CRYPTIDS)
 const preferences = ['random', 'hunter', 'cryptid']
-const minPlayers = 3
+const minPlayers = 2
 const maxPlayers = 4
 const assets = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/map.js': ['map.js', 'text/javascript; charset=utf-8'],
+  '/search-discoveries.png': ['search-discoveries.png', 'image/png'],
   '/blackwater-forest.png': ['blackwater-forest.png', 'image/png'],
 }
 class HttpError extends Error {
@@ -30,8 +31,8 @@ function makePlayer(name) {
   return { name, preference: 'random', id: randomUUID(), token: randomBytes(24).toString('base64url'), requests: new Set() }
 }
 
-function publicPlayer({ id, name, preference, role, hunterClass }) {
-  return { id, name, preference, role, hunterClass }
+function publicPlayer({ id, name, preference, role, hunterClass, hunterClasses }) {
+  return { id, name, preference, role, hunterClass, hunterClasses }
 }
 
 function localPlayer(player) {
@@ -61,28 +62,36 @@ function playerName(name, fallback) {
   return typeof name === 'string' ? name.trim().replace(/[\p{Cc}\p{Cf}]/gu, '').slice(0, 24) || fallback : fallback
 }
 
-function view(room, player) {
-  if (room.match) return { code: room.code, match: matchView(room.match, player.id) }
+function view(room, player, hunterId) {
+  if (room.match) return { code: room.code, match: matchView(room.match, player.id, hunterId) }
   const isCryptid = player.role === 'cryptid'
   return {
     code: room.code, stage: room.stage, player: publicPlayer(player), host: room.host === player.id,
-    minPlayers, maxPlayers, players: room.players.map(member => {
+    minPlayers, maxPlayers, faction: room.faction, factions: FACTIONS, players: room.players.map(member => {
       if (!isCryptid || member.role !== 'hunter') return publicPlayer(member)
-      const { hunterClass, ...visible } = publicPlayer(member)
-      return { ...visible, classReady: Boolean(hunterClass) }
+      const { hunterClass, hunterClasses, ...visible } = publicPlayer(member)
+      return { ...visible, classReady: hunterClasses ? hunterClasses.length === 3 : Boolean(hunterClass) }
     }),
     ...(room.stage === 'loadout' ? {
       speciesReady: Boolean(room.species),
       ...(isCryptid
         ? { speciesOptions, speciesDetails: CRYPTIDS, chosenSpecies: room.species }
-        : { classDetails: HUNTER_CLASSES }),
+        : { classDetails: classesFor(room.faction) }),
     } : {}),
   }
 }
 
 function finishLoadout(room) {
-  if (!room.species || room.players.some(player => player.role === 'hunter' && !player.hunterClass)) return
-  room.match = createMatch(room.players.map(publicPlayer), room.species)
+  if (!room.species || room.players.some(player => player.role === 'hunter' &&
+    (player.hunterClasses ? player.hunterClasses.length !== 3 : !player.hunterClass))) return
+  const units = room.players.flatMap(player => {
+    if (!player.hunterClasses) return [publicPlayer(player)]
+    return player.hunterClasses.map((hunterClass, index) => ({
+      ...publicPlayer(player), id: index === 0 ? player.id : randomUUID(), ownerId: player.id,
+      name: HUNTER_CLASSES[hunterClass].name, hunterClass,
+    }))
+  })
+  room.match = createMatch(units, room.species, Math.random, room.faction)
   room.stage = 'match'
 }
 
@@ -137,9 +146,10 @@ export function createGameServer() {
         do {
           code = Array.from({ length: 6 }, () => alphabet[randomInt(alphabet.length)]).join('')
         } while (rooms.has(code))
-        const room = { code, host: host.id, players: [host], local: body.local === true, stage: 'lobby', match: null }
+        const room = { code, host: host.id, players: [host], local: body.local === true, faction: 'researchers', stage: 'lobby', match: null }
         if (room.local) {
-          const count = Number(body.playerCount) === maxPlayers ? maxPlayers : minPlayers
+          const requested = Number(body.playerCount)
+          const count = Number.isInteger(requested) && requested >= minPlayers && requested <= maxPlayers ? requested : 3
           while (room.players.length < count) room.players.push(makePlayer('Player ' + (room.players.length + 1)))
         }
         rooms.set(code, room)
@@ -147,7 +157,7 @@ export function createGameServer() {
         json(response, 201, { token: host.token, localSeats, view: view(room, host) })
         return
       }
-      const route = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]{6})\/(seats|state|preference|names|start|species|class|actions)$/)
+      const route = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]{6})\/(seats|state|preference|names|faction|start|species|class|actions)$/)
       const room = route && rooms.get(route[1])
       if (!room) throw new HttpError(404, 'Room not found. Check the room code.')
       const endpoint = route[2]
@@ -164,7 +174,7 @@ export function createGameServer() {
       const player = token && room.players.find(seat => seat.token === token)
       if (!player) throw new HttpError(401, 'This room requires a valid seat.')
       if (method === 'GET' && endpoint === 'state') {
-        json(response, 200, view(room, player))
+        json(response, 200, view(room, player, url.searchParams.get('hunterId')))
       } else if (method === 'POST' && endpoint === 'names') {
         const { names } = await bodyOf(request)
         if (!room.local || room.host !== player.id) throw new HttpError(403, 'Only the Pass and play host can rename seats.')
@@ -182,11 +192,19 @@ export function createGameServer() {
         if (!preferences.includes(preference)) throw new HttpError(400, 'Choose Random, Hunter, or Cryptid.')
         player.preference = preference
         json(response, 200, view(room, player))
+      } else if (method === 'POST' && endpoint === 'faction') {
+        const { faction } = await bodyOf(request)
+        if (room.host !== player.id) throw new HttpError(403, 'Only the host chooses the expedition faction.')
+        if (room.stage !== 'lobby') throw new HttpError(409, 'The expedition faction is locked.')
+        if (typeof faction !== 'string' || !Object.hasOwn(FACTIONS, faction)) throw new HttpError(400, 'Choose a listed faction.')
+        room.faction = faction
+        json(response, 200, view(room, player))
       } else if (method === 'POST' && endpoint === 'start') {
         if (room.host !== player.id) throw new HttpError(403, 'Only the host can start the expedition.')
-        if (room.players.length < minPlayers) throw new HttpError(409, 'At least three players are needed to launch.')
+        if (room.players.length < minPlayers) throw new HttpError(409, 'At least two players are needed to launch.')
         if (room.stage === 'lobby') {
           assignRoles(room.players)
+          if (room.players.length === 2) room.players.find(member => member.role === 'hunter').hunterClasses = []
           room.stage = 'loadout'
         }
         json(response, 200, view(room, player))
@@ -194,7 +212,7 @@ export function createGameServer() {
         const { species } = await bodyOf(request)
         if (room.stage !== 'loadout' || room.species) throw new HttpError(409, 'The Cryptid selection is closed.')
         if (player.role !== 'cryptid') throw new HttpError(403, 'Only the assigned Cryptid can choose a species.')
-        if (!speciesOptions.includes(species)) throw new HttpError(400, 'Choose Sasquatch, Bigfoot, or Mothman.')
+        if (!speciesOptions.includes(species)) throw new HttpError(400, 'Choose a listed Cryptid.')
         room.species = species
         finishLoadout(room)
         json(response, 200, view(room, player))
@@ -202,14 +220,21 @@ export function createGameServer() {
         const { hunterClass } = await bodyOf(request)
         if (room.stage !== 'loadout') throw new HttpError(409, 'The hunter class selection is closed.')
         if (player.role !== 'hunter') throw new HttpError(403, 'Only hunters can choose a hunter class.')
-        if (typeof hunterClass !== 'string' || !Object.hasOwn(HUNTER_CLASSES, hunterClass)) {
+        if (typeof hunterClass !== 'string' || !Object.hasOwn(HUNTER_CLASSES, hunterClass) || HUNTER_CLASSES[hunterClass].faction !== room.faction) {
           throw new HttpError(400, 'Choose a listed hunter class.')
         }
-        if (player.hunterClass && player.hunterClass !== hunterClass) throw new HttpError(409, 'Your class is already locked in.')
-        if (room.players.some(member => member !== player && member.hunterClass === hunterClass)) {
-          throw new HttpError(409, 'Another hunter already picked that class.')
+        if (player.hunterClasses) {
+          if (!player.hunterClasses.includes(hunterClass)) {
+            if (player.hunterClasses.length === 3) throw new HttpError(409, 'Your squad is already locked in.')
+            player.hunterClasses.push(hunterClass)
+          }
+        } else {
+          if (player.hunterClass && player.hunterClass !== hunterClass) throw new HttpError(409, 'Your class is already locked in.')
+          if (room.players.some(member => member !== player && member.hunterClass === hunterClass)) {
+            throw new HttpError(409, 'Another hunter already picked that class.')
+          }
+          player.hunterClass = hunterClass
         }
-        player.hunterClass = hunterClass
         finishLoadout(room)
         json(response, 200, view(room, player))
       } else if (method === 'POST' && endpoint === 'actions') {
@@ -217,13 +242,16 @@ export function createGameServer() {
         if (!room.match) throw new HttpError(409, 'The expedition has not started.')
         // No awaits after this point. Validations and mutations resolve in one event loop turn.
         const requestId = typeof command.requestId === 'string' && command.requestId.length <= 64 ? command.requestId : null
+        let findings
         if (!requestId || !player.requests.has(requestId)) {
           if (command.round !== room.match.round) throw new HttpError(409, 'That round has ended. Try again in the current round.')
-          act(room.match, player.id, command)
+          findings = act(room.match, player.id, command)
           if (requestId) player.requests.add(requestId)
           if (player.requests.size > 100) player.requests.delete(player.requests.values().next().value)
         }
-        json(response, 200, view(room, player))
+        const result = view(room, player, command.hunterId)
+        if (findings) result.searchResults = searchView(result.match, findings)
+        json(response, 200, result)
       } else {
         throw new HttpError(404, 'Unknown endpoint.')
       }
