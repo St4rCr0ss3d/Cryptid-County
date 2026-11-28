@@ -6,7 +6,8 @@ const tiles = $('#tiles')
 const journal = $('#journal')
 const invite = new URL(location.href).searchParams.get('room')?.toUpperCase() ?? ''
 const directions = { N: 'North', E: 'East', S: 'South', W: 'West', here: 'Your sector' }
-const hunterIcons = { 'Park Ranger': 'ranger', 'Trail Biker': 'biker', Prepper: 'prepper', 'True Believer': 'believer', Trapper: 'snare' }
+const hunterIcons = { 'Habitat Surveyor': 'ranger', 'Field Mobility Specialist': 'biker', 'Expedition Quartermaster': 'prepper',
+  'True Believer': 'believer', 'Live-Capture Technician': 'snare' }
 const roleLabels = { random: 'Random', hunter: 'Hunter', cryptid: 'Cryptid' }
 const settingsKey = 'cryptid-county-settings'
 const settings = { callsign: '', mapLabels: true, lanUrl: '', ...JSON.parse(localStorage.getItem(settingsKey) ?? '{}') }
@@ -24,6 +25,13 @@ let menuTab = 'play'
 let lanUrls = []
 let controlTab = 'turn'
 let journalTab = 'notes'
+let targetAction = null
+const targetActions = {
+  sneak: { label: 'Sneak · 2 AP + 2 movement', prompt: 'Choose a direction to sneak' },
+  mislead: { label: 'Leave false tracks · 1 AP', prompt: 'Choose a direction for false tracks' },
+  flush: { label: 'Flush wildlife · 2 AP', prompt: 'Choose a direction to flush wildlife' },
+  checkCamera: { label: 'Check trail cameras · 2 AP', prompt: 'Choose a trail camera to search' },
+}
 let siteId
 let lobbyNameDraft
 let passing = Boolean(session?.passing)
@@ -133,6 +141,8 @@ function setData(next) {
   }
   if (JSON.stringify(next) === JSON.stringify(data)) return
   if (next.match?.player.pos !== data?.match?.player.pos) selected = next.match?.player.pos ?? selected
+  if (next.match?.player.id !== data?.match?.player.id || next.match?.player.pos !== data?.match?.player.pos ||
+    next.match?.round !== data?.match?.round || next.match?.phase !== data?.match?.phase) targetAction = null
   data = next
   render()
 }
@@ -142,7 +152,9 @@ async function sync() {
   const current = epoch
   polling = true
   try {
-    const next = await api(path('state'), { token: session.token })
+    const hunterId = data?.match?.role === 'hunter' ? data.match.player.id : null
+    const statePath = path('state') + (hunterId ? '?hunterId=' + encodeURIComponent(hunterId) : '')
+    const next = await api(statePath, { token: session.token })
     if (current === epoch) setData(next)
   } catch (error) {
     if (current !== epoch) return
@@ -158,12 +170,26 @@ async function sync() {
   }
 }
 
+function showSearchDiscoveries(results) {
+  if (!results?.cards.length) return
+  const dialog = $('#search-discovery')
+  $('#search-discovery-title').textContent = 'Findings in ' + results.sector
+  $('#search-discovery-cards').replaceChildren(...results.cards.map(card => {
+    const art = element('div', 'discovery-art')
+    art.dataset.artwork = card.artwork
+    art.setAttribute('aria-hidden', 'true')
+    return element('figure', 'discovery-card', art,
+      element('figcaption', '', card.label))
+  }))
+  if (!dialog.open) dialog.showModal()
+}
+
 async function mutate(endpoint, body) {
   if (busy) return
   busy = true
   epoch++
   try {
-    const next = await api(path(endpoint), { token: session.token, method: 'POST', body })
+    const { searchResults, ...next } = await api(path(endpoint), { token: session.token, method: 'POST', body })
     if (endpoint === 'actions' && next.match?.role === 'hunter') {
       const previous = data?.match?.player.digital?.length ?? 0
       const items = next.match.player.digital.slice(previous)
@@ -172,7 +198,7 @@ async function mutate(endpoint, body) {
       const damage = photos.filter(item => Number.isInteger(item.damageAge))
       const scat = photos.filter(item => item.type === 'scat')
       const messages = []
-      if (body.type === 'search' && photos.length) {
+      if (['search', 'checkCamera'].includes(body.type) && photos.length) {
         const value = photos.reduce((sum, photo) => sum + photo.value, 0)
         messages.push(photos.length + (photos.length === 1 ? ' photo saved' : ' photos saved') + ' · ' + money(value) + ' estimated')
       } else if (damage.length === 1) {
@@ -188,7 +214,9 @@ async function mutate(endpoint, body) {
       if (messages.length) notify(messages.join(' · '))
     }
     if (endpoint === 'names') lobbyNameDraft = undefined
+    if (endpoint === 'actions' && body.type === targetAction) targetAction = null
     setData(next)
+    showSearchDiscoveries(searchResults)
     return true
   } catch (error) {
     notify(error.message, true)
@@ -201,7 +229,9 @@ async function mutate(endpoint, body) {
 
 function send(type, target, extra = {}) {
   const requestId = Array.from(crypto.getRandomValues(new Uint32Array(4))).join('-')
-  return mutate('actions', { type, target, ...extra, round: data.match.round, requestId })
+  const { match } = data
+  const hunterId = match.role === 'hunter' ? match.player.id : undefined
+  return mutate('actions', { type, target, ...extra, hunterId, round: match.round, requestId })
 }
 
 function segments(items, active, select) {
@@ -230,6 +260,15 @@ function evidenceValue(value) {
 
 function row(label, ...cells) {
   return element('li', 'row', element('span', '', label), element('div', 'row-group', ...cells))
+}
+
+function itemRow(label, description, ...cells) {
+  const item = row(label, ...cells)
+  if (description) {
+    item.firstElementChild.classList.add('item-label')
+    item.firstElementChild.append(element('small', 'item-description', description))
+  }
+  return item
 }
 
 function list(rows, empty) {
@@ -418,35 +457,52 @@ function showRoom(room) {
   choices.setAttribute('aria-label', 'Your role preference')
   side.append(element('h3', '', 'Your role preference'), choices,
     element('p', 'hint', 'Roles are assigned at launch. Ties are decided at random.'),
+    element('p', 'hint', count <= 2 ? '1v1 · One player commands three researchers.' :
+      count === 3 ? '2v1 · One researcher per player, with a $600 team grant.' : '3v1 · One researcher per player.'),
     element('h3', 'section-title', 'Players · ' + count + '/' + (local ? count : room.maxPlayers)))
+  const faction = room.factions?.[room.faction]
+  if (faction) {
+    side.append(element('h3', 'section-title', 'Expedition faction'))
+    if (room.host) {
+      const factions = segments(Object.entries(room.factions).map(([key, details]) => [key, details.name]), room.faction,
+        value => mutate('faction', { faction: value }))
+      factions.setAttribute('aria-label', 'Expedition faction')
+      side.append(factions)
+    } else side.append(element('strong', '', faction.name))
+    side.append(element('p', 'hint', faction.objective))
+  }
   if (local && room.host) {
     side.append(localNameForm(room))
     return
   }
   side.append(list(seats, ''))
   side.append(room.host ? button('Launch expedition', () => mutate('start'), 'primary full', count < room.minPlayers)
-    : element('p', 'hint', 'The host can launch once at least three players have joined.'))
+    : element('p', 'hint', 'The host can launch once at least two players have joined.'))
 }
 
 function showLoadout(room) {
   const cryptid = room.player.role === 'cryptid'
   const selectedClass = room.classDetails?.[room.player.hunterClass]?.name
   const selection = cryptid ? room.chosenSpecies : selectedClass
-  const canChoose = !selection && (cryptid || room.classDetails)
-  const heading = canChoose ? (cryptid ? 'Choose your Cryptid' : 'Choose your hunter class') : (selection ?? 'You’re a hunter')
-  const message = canChoose && !cryptid ? 'Each class can be picked by one hunter.' :
+  const squad = room.player.hunterClasses
+  const canChoose = squad ? squad.length < 3 : !selection && (cryptid || room.classDetails)
+  const heading = squad ? 'Expedition squad · ' + squad.length + '/3' :
+    canChoose ? (cryptid ? 'Choose your Cryptid' : 'Choose your hunter class') : (selection ?? 'You’re a hunter')
+  const message = canChoose && !cryptid ? (squad ? 'Choose three distinct researcher classes.' : 'Each class can be picked by one hunter.') :
     'The first round begins after everyone locks in their choice.'
-  side.replaceChildren(sideHeading('Roles assigned', heading, message))
+  side.replaceChildren(sideHeading(room.factions?.[room.faction]?.name ?? 'Roles assigned', heading, message))
   if (canChoose) {
     const buttons = cryptid ? room.speciesOptions.map(species => {
       const details = room.speciesDetails?.[species]
       const option = button('', () => mutate('species', { species }), 'species-option')
       option.append(element('strong', '', species))
-      if (details) option.append(element('small', '', details.ability + ' · ' + details.description))
-      if (Number.isInteger(details?.chargePickups)) option.append(element('span', 'badge', details.chargePickups + ' charge pickups'))
+      if (details) option.append(element('span', '', details.nightAP + ' AP · ' + details.nightMovement + ' movement at night'))
+      if (details) option.append(element('small', '', details.ability + (details.passive ? ' (passive)' : ' · ' + details.abilityCost + ' AP') + ' · ' + details.description))
+      if (details?.goal) option.append(element('small', '', 'Personal challenge · ' + details.goal.description))
+      if (details?.ultimate) option.append(element('small', '', 'Unlocks ' + details.ultimate.name + ' · ' + details.ultimate.description))
       return option
     }) : Object.entries(room.classDetails).map(([hunterClass, details]) => {
-      const claimed = room.players.find(member => member.hunterClass === hunterClass)
+      const claimed = room.players.find(member => member.hunterClass === hunterClass || member.hunterClasses?.includes(hunterClass))
       const option = button('', () => mutate('class', { hunterClass }), 'species-option', Boolean(claimed))
       option.append(element('strong', '', details.name), element('small', '', details.description))
       if (claimed) option.append(element('span', 'badge', 'Taken by ' + claimed.name))
@@ -455,8 +511,10 @@ function showLoadout(room) {
     side.append(element('div', 'species-list', ...buttons))
   }
   side.append(list(room.players.map(member => {
-    const ready = member.role === 'cryptid' ? room.speciesReady : (member.classReady ?? Boolean(member.hunterClass))
-    const choice = room.classDetails?.[member.hunterClass]?.name ?? (ready ? 'Ready' : 'Choosing')
+    const ready = member.role === 'cryptid' ? room.speciesReady :
+      (member.classReady ?? (member.hunterClasses ? member.hunterClasses.length === 3 : Boolean(member.hunterClass)))
+    const squadNames = member.hunterClasses?.map(key => room.classDetails[key].name).join(', ')
+    const choice = squadNames || room.classDetails?.[member.hunterClass]?.name || (ready ? 'Ready' : 'Choosing')
     return row(member.name + (room.player.id === member.id ? ' (you)' : ''), badge(choice, ready ? 'gold' : null))
   }), ''))
 }
@@ -486,13 +544,14 @@ function showPassScreen() {
   side.append(element('div', 'action-list', ...choices))
 }
 
-function mark(icon, label, variant, { last = false, alert = false, tagged = false, self = false, index } = {}) {
+function mark(icon, label, variant, { last = false, alert = false, tagged = false, self = false, index, description } = {}) {
   const node = element('span', 'marker ' + variant + (last ? ' last' : '') + (alert ? ' alert' : '') +
     (tagged ? ' tagged' : '') + (self ? ' self' : ''), mapIcon(icon))
   if (index != null) node.append(element('small', 'marker-index', String(index + 1)))
   node.setAttribute('aria-label', label)
   node.setAttribute('role', 'img')
   node.title = label
+  if (description) node.dataset.description = description
   return node
 }
 
@@ -523,7 +582,9 @@ function renderSectorCard(sector, markers, barriers) {
   contacts.replaceChildren(...markers.map(marker => {
     const icon = marker.cloneNode(true)
     icon.setAttribute('aria-hidden', 'true')
-    return element('li', '', icon, element('span', '', marker.title))
+    const description = marker.dataset.description
+    return element('li', '', icon, element('span', '', marker.title,
+      ...(description ? [element('small', 'item-description', description)] : [])))
   }))
 }
 
@@ -545,10 +606,8 @@ function renderMap(match) {
     const sector = map[tile.dataset.sector]
     const { id } = sector
     const isMoving = match?.moves.includes(id)
-    const isBiking = match?.bikeMoves?.includes(id)
     const current = match?.player.pos === id
-    tile.classList.toggle('reachable', Boolean(isMoving || isBiking))
-    tile.classList.toggle('bike-reachable', Boolean(isBiking))
+    tile.classList.toggle('reachable', Boolean(isMoving))
     tile.classList.toggle('selected', id === selected)
     tile.classList.toggle('origin', current)
     tile.classList.toggle('gassed', Boolean(match?.gas.includes(id)))
@@ -568,35 +627,44 @@ function renderMap(match) {
     tile.querySelector('.trail-gates').replaceChildren(...gates)
     for (const hunter of match?.hunters.filter(member => member.pos === id) ?? []) {
       const self = hunter.id === match.player.id
-      const icon = hunterIcons[hunter.className] ?? 'hunter'
+      const icon = hunter.bikePos ? 'hunter' : (hunterIcons[hunter.className] ?? 'hunter')
       units.push(mark(icon, hunter.name + (self ? ' (you)' : '') + (hunter.restrained ? ' (restrained)' : ''), 'hunter',
         { alert: hunter.restrained, self, index: hunter.index }))
+    }
+    for (const hunter of match?.hunters.filter(member => member.bikePos === id) ?? []) {
+      units.push(mark('biker', hunter.name + ' · Parked trail bike', 'device'))
     }
     if (match?.cryptid?.pos === id) {
       const { name, live, restrained } = match.cryptid
       units.unshift(mark(name === 'Mothman' ? 'moth' : 'footprint',
-        name + (live ? restrained ? ' (restrained)' : ' (live)' : ' (last known)'), 'cryptid', { last: !live, alert: restrained }))
+        name + (match.cryptid.tagged ? ' (tagged)' : live ? restrained ? ' (restrained)' : ' (live)' : ' (last known)'), 'cryptid', { last: !live, alert: restrained }))
     }
     for (const animal of match?.animals.filter(item => item.pos === id) ?? []) {
       const name = animal.status === 'alive' ? animal.name : animal.name + ' remains'
       units.push(mark(animal.species, name + (animal.tagged ? ' (tagged)' : animal.live ? '' : ' (last known)'),
         'animal', { last: !animal.live, tagged: animal.tagged }))
     }
-    if (match?.chargeGrowths?.some(growth => growth.pos === id)) units.push(mark('growth', 'Charge growth', 'growth'))
     const snares = match?.snares?.filter(snare => snare.pos === id) ?? []
     if (snares.length) {
       const active = snares.some(snare => snare.activated != null)
       units.push(mark('snare', 'Cryptid snare' + (snares.length > 1 ? ' ×' + snares.length : '') +
-        (active ? ' (active alert)' : ''), 'cryptid', { alert: active }))
+        (active ? ' (active alert)' : ''), 'cryptid snare', { alert: active }))
     }
     const localDevices = match?.devices.filter(item => item.type !== 'blockade' && item.pos === id) ?? []
     const working = localDevices.filter(device => !device.broken)
-    for (const type of new Set(working.map(item => item.type))) {
-      const devices = working.filter(item => item.type === type)
-      const active = devices.some(device => device.activated != null)
+    const deviceGroups = new Map()
+    for (const device of working) {
+      const key = device.type + ':' + (device.activated != null)
+      if (!deviceGroups.has(key)) deviceGroups.set(key, [])
+      deviceGroups.get(key).push(device)
+    }
+    for (const devices of deviceGroups.values()) {
+      const { type, activated } = devices[0]
+      const active = activated != null
       const label = gear[type].unit + (devices.length > 1 ? ' ×' + devices.length : '') +
         (active ? ' (active alert)' : devices[0].remembered ? ' (remembered)' : '')
-      units.push(mark(type, label, 'device', { last: devices[0].remembered, alert: active }))
+      const icon = { anchor: 'snare', aerial: 'snare', resonance: 'snare', baitCage: 'snare', voiceTrap: 'snare', lowLight: 'camera', mic: 'detector' }[type] ?? type
+      units.push(mark(icon, label, 'device', { last: devices[0].remembered, alert: active, description: gear[type].description }))
     }
     const broken = localDevices.filter(device => device.broken)
     if (broken.length) units.push(mark('broken', 'Broken equipment · ' +
@@ -619,7 +687,7 @@ function renderMap(match) {
       : units
     markers.replaceChildren(...visible)
     const labels = [...units.map(node => node.title), ...gateLabels]
-    tile.setAttribute('aria-label', id + ' · ' + sector.name + (isBiking ? ' · Ride here' : isMoving ? ' · Move here' : '') +
+    tile.setAttribute('aria-label', id + ' · ' + sector.name + (isMoving ? ' · Move here' : '') +
       (current ? ' · Your position' : '') + (labels.length ? ' · ' + labels.join(', ') : ''))
   }
   renderSectorCard(map[selected], selectedMarkers, barriers)
@@ -629,8 +697,7 @@ function setupMap() {
   for (const sector of Object.values(map)) {
     const node = button('', () => {
       selected = sector.id
-      if (!passing && data?.match?.bikeMoves?.includes(sector.id)) send('bike', sector.id)
-      else if (!passing && data?.match?.moves.includes(sector.id)) send('move', sector.id)
+      if (!passing && data?.match?.moves.includes(sector.id)) send('move', sector.id)
       renderMap(passing ? null : data?.match)
     }, 'tile')
     node.dataset.sector = sector.id
@@ -662,18 +729,19 @@ function showStats(match) {
   if (!match) {
     caption.textContent = passing ? 'Pass and play' : 'Expedition headquarters'
     subtitle.textContent = passing ? 'Select the next player to open their private map.' :
-      'A hidden-movement hunt for two or three hunters and one Cryptid.'
+      'A hidden-movement hunt for two to four players.'
     stats.replaceChildren()
     return
   }
   caption.textContent = match.winner ? 'Expedition complete' :
-    match.phase === 'hunters' ? 'Hunter phase' : 'Cryptid phase'
+    match.phase === 'hunters' ? 'Day · Expedition turn' : 'Night · Cryptid turn'
   subtitle.textContent = match.role === 'hunter' ?
-    'Find and capture ' + match.species + ' before expedition funds run out.' :
-    'Evade the hunters and survive until their funds run out.'
+    (match.faction?.objective ?? 'Capture the Cryptid before expedition funding runs out.') :
+    'Outlast expedition funding. Complete your personal challenge to unlock an ultimate.'
   stats.replaceChildren(statsCard('Round', String(match.round)),
     match.role === 'hunter' ? statsCard('Treasury', money(match.cash)) : statsCard('Hunger', match.player.hunger + ' / 5'),
-    statsCard('Actions', match.player.ap + ' / 2'))
+    statsCard('Actions', match.player.maxAP == null ? String(match.player.ap) : match.player.ap + ' / ' + match.player.maxAP),
+    ...(match.player.maxMovement == null ? [] : [statsCard('Movement', match.player.movement + ' / ' + match.player.maxMovement)]))
 }
 
 function showTurn(match, blockadeOpen) {
@@ -685,35 +753,78 @@ function showTurn(match, blockadeOpen) {
     element('p', '', sector ? sector.terrain + ' · ' + Object.keys(sector.exits).map(dir => directions[dir]).join(', ') : ''))
   side.append(context)
   if (match.role === 'cryptid') {
+    if (match.goal) {
+      side.append(element('h3', '', 'Personal challenge · ' + Math.min(match.goal.progress, match.goal.target) + '/' + match.goal.target),
+        element('p', 'hint', match.goal.description))
+      for (const item of match.goal.requirements ?? []) {
+        side.append(element('p', 'hint', item.label + ' · ' + Math.min(item.progress, item.target) + '/' + item.target))
+      }
+    }
+    if (match.ultimate) {
+      const { unlocked, cooldown } = match.ultimate
+      const status = !unlocked ? 'Locked' : cooldown ? 'Cooldown · ' + cooldown + (cooldown === 1 ? ' round' : ' rounds') : 'Ready'
+      side.append(element('div', 'context', element('strong', '', match.ultimate.name + ' · ' + status),
+        element('p', '', match.ultimate.description + ' · 2-round cooldown · ' + match.ultimate.cost + ' AP.')))
+    }
+    if (player.disguise) side.append(element('p', 'hint', 'Animal form · ' + player.disguise))
     const meter = element('div', 'hunger', ...Array.from({ length: 5 }, (_, index) =>
       element('span', index < player.hunger ? 'filled' : '')))
     meter.setAttribute('aria-label', 'Hunger ' + player.hunger + ' of 5')
     side.append(meter)
     if (player.ability) {
       side.append(element('div', 'context',
-        element('strong', '', player.ability.ability + ' · ' + player.charges + (player.charges === 1 ? ' charge' : ' charges')),
-        element('p', '', player.ability.description),
-        element('p', '', 'Feed on a purple charge growth to gain one charge.')))
+        element('strong', '', player.ability.ability + (player.ability.passive ? ' · Passive' : ' · ' + player.ability.abilityCost + ' AP')),
+        element('p', '', player.ability.description)))
     }
-    if (player.restrained) side.append(element('p', 'warning', 'Restrained. Spend one action to escape.'))
+    if (player.restrained) side.append(element('p', 'warning', 'Restrained. Spend 2 AP to escape.'))
     if (match.devices.some(device => device.type === 'blockade' && !device.broken && !device.remembered)) {
-      side.append(element('p', 'hint', 'Blue barriers close the marked trails to ground movement. You can destroy them from either side.'))
+      side.append(element('p', 'hint', 'Blue barriers close the marked trails to ground movement. They stay closed until an expedition specialist recovers them.'))
     }
   } else {
     side.append(element('p', 'hint', readyCount + '/' + match.hunters.length + ' hunters ready · ' + money(match.upkeep) + ' upkeep per round'))
-    if (player.restrained) side.append(element('p', 'warning', 'Restrained by a Cryptid snare. Spend one action to escape.'))
+    if (player.restrained) side.append(element('p', 'warning', 'Restrained by a Cryptid snare.'))
     if (match.ready && !player.restrained && match.round === 1 && !player.gear.length && match.sites.some(site => site.camp)) {
       side.append(element('p', 'hint', 'Buy and withdraw your starting gear at base camp.'),
         button('Open camp shop', () => { controlTab = 'site'; showMatch(match) }, 'secondary full shop-link'))
     }
+    if (match.actions.some(item => item.type === 'search') && (match.devices.some(device => device.activated != null &&
+      (device.pos === player.pos || device.to === player.pos)) ||
+      match.snares?.some(snare => snare.pos === player.pos && snare.activated != null))) {
+      side.append(element('p', 'hint', 'Search this sector to investigate the alert.'))
+    }
+    if (match.ready && player.searchedHere) side.append(element('p', 'hint', 'You already searched this sector today.'))
     if (match.warning) side.append(element('p', 'warning', 'Round ' + match.warning.round + ' hunger bearing · ' + directions[match.warning.dir]))
-    if (player.hunterClass === 'ranger') side.append(element('p', 'hint', 'Trail blockades carried · ' + player.blockades))
+    if (player.blockades) side.append(element('p', 'hint', 'Trail blockades carried · ' + player.blockades))
   }
-  if (match.moves.length) side.append(element('p', 'hint', match.bikeMoves?.length ?
-    'Select a blue sector to ride two tiles for 1 AP.' : 'Select a highlighted sector on the map to move.'))
-  const buttons = match.actions.map(item => button(item.label, () => send(item.type, item.target),
-    ['capture', 'shoot', 'escape', 'ability'].includes(item.type) ? 'primary' : 'secondary'))
+  if (player.hunterClass === 'biker') {
+    side.append(element('p', 'hint', player.bikePos === null ? 'Bike mounted. Dismount to take actions.' : 'Bike parked at ' + player.bikePos))
+  }
+  if (match.moves.length) side.append(element('p', 'hint', 'Select a highlighted sector on the map to move.'))
+  const buttons = match.actions.filter(item => !Object.hasOwn(targetActions, item.type)).map(item =>
+    button(item.label, () => send(item.type, item.target),
+      ['capture', 'shoot', 'fireRifle', 'preserve', 'escape', 'ability', 'ultimate'].includes(item.type) ? 'primary' : 'secondary'))
+  for (const [type, { label }] of Object.entries(targetActions)) {
+    if (!match.actions.some(item => item.type === type)) continue
+    const hasSignal = match.actions.some(item => item.type === type && item.signal)
+    const choose = button(label, () => {
+      targetAction = targetAction === type ? null : type
+      showMatch(match)
+      if (targetAction) side.querySelector('.target-choices button')?.focus()
+    }, hasSignal ? 'secondary signal-choice' : 'secondary')
+    choose.setAttribute('aria-expanded', String(targetAction === type))
+    buttons.push(choose)
+  }
   if (buttons.length) side.append(element('div', 'action-list', ...buttons))
+  const directional = targetAction && match.actions.filter(item => item.type === targetAction)
+  if (directional?.length) {
+    const title = targetActions[targetAction].prompt
+    const choices = element('div', 'action-list target-choices', ...directional.map(item =>
+      button(item.label + (item.signal ? ' · New activity' : ''), () => send(item.type, item.target),
+        item.signal ? 'secondary signal-choice' : 'secondary')))
+    choices.setAttribute('role', 'group')
+    choices.setAttribute('aria-label', title)
+    side.append(element('h3', 'section-title', title), choices)
+  }
   if (match.blockadeTargets?.length) {
     const routes = Object.entries(sector?.exits ?? {})
     const choices = match.blockadeTargets.map(target => {
@@ -723,19 +834,21 @@ function showTurn(match, blockadeOpen) {
     })
     const picker = element('details', 'blockade-controls',
       element('summary', '', 'Place trail blockade · 1 AP'),
-      element('p', 'hint', 'Choose a trail touching this sector. It stays closed to the Cryptid until recovered or destroyed.'),
+      element('p', 'hint', 'Choose a trail touching this sector. It stays closed to the Cryptid until recovered.'),
       element('div', 'blockade-options', ...choices))
     picker.open = blockadeOpen
     side.append(picker)
   }
   if (!match.ready) {
-    side.append(element('p', 'hint', player.ended && match.phase === 'hunters' ? 'Waiting for the other hunters to end their turn.' :
+    side.append(element('p', 'hint', player.ended && match.phase === 'hunters' ? (match.hunters.some(hunter => !hunter.ended && match.controlledHunterIds?.includes(hunter.id)) ?
+      'Switch to another researcher to finish their turn.' : 'Waiting for the other hunters to end their turn.') :
       (match.role === 'hunter' ? 'The Cryptid is taking its turn.' : 'The hunters are taking their turn.')))
   }
-  if (match.canEnd) side.append(button('End turn', () => send('end'), 'primary full'))
+  if (match.canEnd) side.append(button(match.controlledHunterIds?.length > 1 ? 'End researcher turn' : 'End turn',
+    () => send('end'), 'primary full'))
   if (match.role === 'hunter') {
     const roster = match.hunters.map(hunter => row(hunter.name + (hunter.id === player.id ? ' (you)' : ''),
-      badge(hunter.pos), ...(hunter.className ? [badge(hunter.className)] : []), ...(hunter.restrained ? [badge('Restrained', 'danger')] : []),
+      badge(hunter.pos), ...(hunter.className && hunter.className !== hunter.name ? [badge(hunter.className)] : []), ...(hunter.restrained ? [badge('Restrained', 'danger')] : []),
       badge(hunter.ended ? 'Ready' : hunter.ap + ' AP', hunter.ended ? null : 'gold')))
     side.append(element('h3', 'section-title', 'Hunter team'), list(roster, ''))
   }
@@ -743,7 +856,7 @@ function showTurn(match, blockadeOpen) {
 
 function packLabel(pack) {
   const definition = gear[pack.type]
-  const quantity = pack.type === 'netgun' ? pack.qty + '/2 shots' :
+  const quantity = ['netgun', 'rifle'].includes(pack.type) ? pack.qty + '/' + definition.size + ' shots' :
     definition.size > 1 ? pack.qty + '/' + definition.size : ''
   return definition.name + (quantity ? ' · ' + quantity : '')
 }
@@ -755,15 +868,22 @@ function damageAgeText(age) {
 
 function showPack(match) {
   const { player } = match
-  const gearRows = player.gear.map(pack => row(packLabel(pack), badge(pack.type === 'kit' ? 'Passive' : 'Gear')))
-  const cargoRows = player.cargo.map(item => row(item.name, ...evidenceValue(item.value)))
+  const gearRows = player.gear.map(pack => itemRow(packLabel(pack), gear[pack.type].description,
+    badge(pack.type === 'kit' ? 'Passive' : 'Gear')))
+  const roleRows = []
+  if (player.bikeDescription) roleRows.push(itemRow('Personal trail bike', player.bikeDescription,
+    badge(player.bikePos === null ? 'Mounted' : 'Parked at ' + player.bikePos)))
+  if (player.hasBlockadeGear) roleRows.push(itemRow(gear.blockade.name, gear.blockade.description,
+    badge(player.blockades + ' carried')))
+  const cargoRows = player.cargo.map(item => itemRow(item.name, item.description, ...evidenceValue(item.value)))
   const digitalRows = player.digital.map(item => {
     const type = item.photo ? 'Photo · ' : item.video ? 'Video tape · ' : ''
-    const age = Number.isInteger(item.damageAge) ? ' · ' + damageAgeText(item.damageAge) : ''
-    return row(type + item.name + age, ...evidenceValue(item.value))
+    const age = item.trackAge ? ' · ' + item.trackAge : Number.isInteger(item.damageAge) ? ' · ' + damageAgeText(item.damageAge) : ''
+    return itemRow(type + item.name + age, item.description, ...evidenceValue(item.value))
   })
+  if (roleRows.length) side.append(element('h3', '', 'Role equipment'), list(roleRows, ''))
   side.append(element('h3', '', 'Equipment · ' + player.gear.length + '/' + (player.equipmentCapacity ?? 3) + ' slots'), list(gearRows, 'No equipment carried.'),
-    element('h3', 'section-title', 'Cargo · ' + player.cargo.length + '/3 slots'), list(cargoRows, 'No cargo carried.'),
+    element('h3', 'section-title', 'Cargo · ' + player.cargo.length + '/' + (player.cargoCapacity ?? 3) + ' slots'), list(cargoRows, 'No cargo carried.'),
     element('h3', 'section-title', 'Digital evidence · ' + player.digital.length),
     list(digitalRows, 'Search for clues to add photos.'))
   if (digitalRows.length) side.append(element('p', 'hint', 'Estimates reflect the team’s evidence sales so far.'))
@@ -789,7 +909,7 @@ function showSite(match) {
     side.append(select)
   }
   const { player } = match
-  const siteReady = match.ready && !player.restrained
+  const siteReady = match.ready && !player.restrained && player.bikePos !== null
   const atSite = (type, target, withPack) => send(type, target, { site: site.id, with: withPack })
   const transfer = (name, type, target, disabled = false) =>
     button(name, () => atSite(type, target), 'secondary compact', disabled || !siteReady)
@@ -801,17 +921,16 @@ function showSite(match) {
     button('Submit evidence', () => atSite('submit'), 'primary', !siteReady || !canSubmit))
   if (site.camp) sales.append(button('Sell meat', () => atSite('sellMeat'), 'secondary', !siteReady || !canSell))
   side.append(sales, element('h3', '', 'Carried equipment'),
-    list(player.gear.map(pack => row(packLabel(pack), transfer('Deposit', 'storeGear', pack.id))), 'No equipment carried.'))
+    list(player.gear.map(pack => itemRow(packLabel(pack), gear[pack.type].description, transfer('Deposit', 'storeGear', pack.id))), 'No equipment carried.'))
 
   const store = []
   for (const [type, definition] of Object.entries(gear)) {
-    if (definition.classGear) continue
+    const price = match.shop ? match.shop[type] : (definition.classGear ? undefined : definition.price)
     const packs = site.gear.filter(pack => pack.type === type)
-    if (!site.camp && !packs.length) continue
-    const count = packs.reduce((sum, pack) => sum + (type === 'netgun' ? 1 : pack.qty), 0)
-    const heading = row(definition.name, badge(count + ' stored'))
-    if (site.camp) heading.lastElementChild.append(transfer('Buy ' + money(definition.price), 'buy', type, match.cash < definition.price))
-    heading.firstElementChild.title = definition.description
+    if (!packs.length && (!site.camp || price === undefined)) continue
+    const count = packs.reduce((sum, pack) => sum + (['netgun', 'rifle'].includes(type) ? 1 : pack.qty), 0)
+    const heading = itemRow(definition.name, definition.description, badge(count + ' stored'))
+    if (site.camp && price !== undefined) heading.lastElementChild.append(transfer('Buy ' + money(price), 'buy', type, match.cash < price))
     store.push(heading)
     for (const pack of packs) {
       const withdraw = transfer('Withdraw', 'takeGear', pack.id)
@@ -833,19 +952,40 @@ function showSite(match) {
   side.append(element('h3', 'section-title', site.camp ? 'Camp storage and shop' : 'Tent storage'),
     list(store, 'No equipment stored.'), element('h3', 'section-title', 'Carcasses'),
     list([
-      ...player.cargo.filter(item => item.species).map(item => row(item.name + ' · carried', transfer('Deposit', 'storeCargo', item.id))),
-      ...site.cargo.map(item => row(item.name + ' · stored', transfer('Withdraw', 'takeCargo', item.id, player.cargo.length >= 3))),
+      ...player.cargo.filter(item => item.species).map(item => itemRow(item.name + ' · carried', item.description, transfer('Deposit', 'storeCargo', item.id))),
+      ...site.cargo.map(item => itemRow(item.name + ' · stored', item.description, transfer('Withdraw', 'takeCargo', item.id, player.cargo.length >= (player.cargoCapacity ?? 3)))),
     ], 'No carcasses here.'))
+}
+
+async function selectResearcher(hunterId) {
+  if (busy || passing) return
+  busy = true
+  epoch++
+  try {
+    const next = await api(path('state') + '?hunterId=' + encodeURIComponent(hunterId), { token: session.token })
+    selected = next.match.player.pos
+    siteId = undefined
+    setData(next)
+  } catch (error) {
+    notify(error.message, true)
+  } finally {
+    busy = false
+    sync()
+  }
 }
 
 function showMatch(match) {
   const { player } = match
   const blockadeOpen = side.querySelector('.blockade-controls')?.open ?? false
-  const head = sideHeading((match.role === 'hunter' ? (player.className ?? 'Hunter') : match.species) + ' · ' + player.name,
-    match.winner ? (match.winner === 'hunters' ? 'Cryptid captured' : 'Expedition exhausted') : 'Field operations')
+  const goalWin = match.winReason === 'personalGoal'
+  const roleName = match.role === 'hunter' ? (player.className ?? 'Hunter') : match.species
+  const playerLabel = roleName === player.name ? player.name : roleName + ' · ' + player.name
+  const head = sideHeading(playerLabel,
+    match.winner ? (match.winner === 'hunters' ? (match.faction?.outcome ?? 'Cryptid captured') : goalWin ? 'Cryptid goal completed' : 'Expedition exhausted') : 'Field operations')
   side.replaceChildren(head)
   if (match.winner) {
-    const message = match.winner === 'hunters' ? 'The hunters secured the Cryptid and won the expedition.' :
+    const message = match.winner === 'hunters' ? (match.faction?.name ?? 'The expedition') + ' won.' :
+      goalWin ? (match.goal ? match.goal.description : 'The Cryptid completed its secret objective.') :
       'The treasury ran dry. The Cryptid survived.'
     side.append(element('p', 'muted', message), button('New expedition', () => {
       session = null
@@ -864,6 +1004,15 @@ function showMatch(match) {
     return
   }
   if (match.role === 'hunter') {
+    if (match.proof) side.append(element('p', 'hint', 'Verified records submitted: ' + match.proof.count +
+      ' · Clear footage ' + (match.proof.visual ? 'submitted' : 'required')))
+    if (match.controlledHunterIds?.length > 1) {
+      const researchers = match.hunters.filter(hunter => match.controlledHunterIds.includes(hunter.id))
+      const choices = segments(researchers.map(hunter => [hunter.id,
+        hunter.name + (hunter.ended ? ' · Ready' : ' · ' + hunter.ap + ' AP')]), player.id, selectResearcher)
+      choices.setAttribute('aria-label', 'Active researcher')
+      side.append(choices)
+    }
     side.append(segments([['turn', 'Turn'], ['pack', 'Inventory'], ['site', 'Site']], controlTab,
       tab => { controlTab = tab; showMatch(match) }))
   }
@@ -887,12 +1036,18 @@ function showJournal(match) {
   let rows
   let empty
   if (journalTab === 'log') {
-    rows = match.logs.map(item => row(item.message, element('small', '', 'Round ' + item.round)))
+    rows = match.logs.map(item => {
+      const entry = row(item.message, element('small', '', 'Round ' + item.round))
+      if (item.equipmentAlert) entry.classList.add('equipment-log-alert')
+      return entry
+    })
     empty = 'No entries yet.'
   } else if (journalTab === 'signals') {
     rows = [
       ...match.devices.filter(item => item.activated != null).map(item =>
         row(gear[item.type].unit + ' alert · ' + item.pos, element('small', '', 'Round ' + item.activated))),
+      ...match.snares.filter(snare => snare.activated != null).map(snare =>
+        row('Cryptid snare alert · ' + snare.pos, element('small', '', 'Round ' + snare.activated))),
       ...match.warnings.map(item => row(item.name + ' · ' + directions[item.dir], element('small', '', 'Round ' + item.round))),
     ]
     empty = 'No equipment alerts or hunger bearings.'
@@ -945,6 +1100,7 @@ function render() {
 const fieldGuide = $('#guide-content').content
 $('#guide-panel').append(fieldGuide.cloneNode(true))
 $('#guide-dialog-content').append(fieldGuide.cloneNode(true))
+$('#search-discovery').addEventListener('click', () => $('#search-discovery').close())
 $('#guide-open').addEventListener('click', () => $('#guide').showModal())
 $('#settings-open').addEventListener('click', () => {
   $('#settings-content').replaceChildren(showSettings())
