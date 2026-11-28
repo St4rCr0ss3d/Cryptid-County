@@ -117,7 +117,7 @@
   <template id="guide-content">
     <div class="guide-body">
       <h3>Start an expedition</h3>
-      <p>Create a lobby and share its invite with players on the same network. Each player picks Random, Hunter, or Cryptid. The host can launch with two to four players. In 1v1, one player commands three researchers. In 2v1, each researcher player controls one unit and the team gets a $600 grant. In 3v1, each researcher player controls one unit. The Cryptid chooses a species and each researcher picks an unused class. For one device, choose Pass and play.</p>
+      <p>Create a lobby and share its invite with players on the same network. Each player picks Random, Hunter, or Cryptid. The host chooses the match size when creating the lobby. Joining players use the room code, and the host launches once all seats are filled. In 1v1, one player commands three researchers. In 2v1, each researcher player controls one unit and the team gets a $600 grant. In 3v1, each researcher player controls one unit. The Cryptid chooses a species and each researcher picks an unused class. For one device, choose Pass and play.</p>
       <h3>Hunters</h3>
       <p>Start by spending the shared $2,000 treasury at the camp shop. Expedition members get 3 AP and normally 2 movement each Day. Search for clues, wildlife, and the Cryptid. Search saves evidence photos in your inventory with estimated sale values.</p>
       <p>When a Cryptid seen in person moves, the last-known marker shows where it went. Enter that sector to confirm it if it is still there. You can use one action to follow and one to fire, then a teammate can move in and capture. Use camp and tents to submit evidence and transfer gear even after spending all actions. Only camp buys meat and sells gear.</p>
@@ -150,8 +150,8 @@
     <form id="room-form">
       <label for="callsign">Callsign</label><input id="callsign" name="name" autocomplete="nickname" maxlength="24" placeholder="Enter a callsign">
       <label for="room-code" class="join-only">Room code</label><input id="room-code" class="join-only code-input" name="code" autocapitalize="characters" autocomplete="off" maxlength="6" placeholder="6-character code">
-      <label for="party-size" class="local-only">Players on this device</label>
-      <select id="party-size" class="local-only" name="playerCount"><option value="2">2 players · 1v1</option><option value="3" selected>3 players · 2v1</option><option value="4">4 players · 3v1</option></select>
+      <label for="party-size" class="host-options">Match size</label>
+      <select id="party-size" class="host-options" name="playerCount"><option value="2">2 players · 1v1</option><option value="3" selected>3 players · 2v1</option><option value="4">4 players · 3v1</option></select>
       <div class="form-actions">
         <button type="submit" class="primary" id="room-submit">Create lobby</button>
       </div>
