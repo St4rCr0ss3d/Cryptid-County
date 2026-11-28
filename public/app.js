@@ -359,7 +359,8 @@ function showSetup() {
     setupMode = mode
     const joining = mode === 'join'
     for (const node of side.querySelectorAll('.join-only')) node.hidden = !joining
-    for (const node of side.querySelectorAll('.local-only')) node.hidden = mode !== 'local'
+    for (const node of side.querySelectorAll('.host-options')) node.hidden = joining
+    $('#party-size').disabled = joining
     for (const node of side.querySelectorAll('[data-mode]')) node.setAttribute('aria-pressed', node.dataset.mode === mode)
     $('#room-code').required = joining
     $('#room-submit').textContent = joining ? 'Join lobby' : mode === 'local' ? 'Set up local game' : 'Create lobby'
@@ -444,6 +445,7 @@ function localNameForm(room) {
 function showRoom(room) {
   const count = room.players.length
   const local = Boolean(session.localSeats)
+  const matchSize = room.minPlayers === room.maxPlayers ? room.maxPlayers : count
   const seats = room.players.map(player => row(player.name + (room.player.id === player.id ? ' (you)' : ''),
     badge(roleLabels[player.preference], player.preference === 'cryptid' ? 'gold' : null)))
   for (let index = count; !local && index < room.maxPlayers; index++) {
@@ -457,8 +459,8 @@ function showRoom(room) {
   choices.setAttribute('aria-label', 'Your role preference')
   side.append(element('h3', '', 'Your role preference'), choices,
     element('p', 'hint', 'Roles are assigned at launch. Ties are decided at random.'),
-    element('p', 'hint', count <= 2 ? '1v1 · One player commands three researchers.' :
-      count === 3 ? '2v1 · One researcher per player, with a $600 team grant.' : '3v1 · One researcher per player.'),
+    element('p', 'hint', matchSize <= 2 ? '1v1 · One player commands three researchers.' :
+      matchSize === 3 ? '2v1 · One researcher per player, with a $600 team grant.' : '3v1 · One researcher per player.'),
     element('h3', 'section-title', 'Players · ' + count + '/' + (local ? count : room.maxPlayers)))
   const faction = room.factions?.[room.faction]
   if (faction) {
@@ -477,7 +479,7 @@ function showRoom(room) {
   }
   side.append(list(seats, ''))
   side.append(room.host ? button('Launch expedition', () => mutate('start'), 'primary full', count < room.minPlayers)
-    : element('p', 'hint', 'The host can launch once at least two players have joined.'))
+    : element('p', 'hint', 'The host can launch once ' + room.minPlayers + ' players have joined.'))
 }
 
 function showLoadout(room) {

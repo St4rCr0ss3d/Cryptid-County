@@ -67,7 +67,7 @@ function view(room, player, hunterId) {
   const isCryptid = player.role === 'cryptid'
   return {
     code: room.code, stage: room.stage, player: publicPlayer(player), host: room.host === player.id,
-    minPlayers, maxPlayers, faction: room.faction, factions: FACTIONS, players: room.players.map(member => {
+    minPlayers: room.playerCount ?? minPlayers, maxPlayers: room.playerCount ?? maxPlayers, faction: room.faction, factions: FACTIONS, players: room.players.map(member => {
       if (!isCryptid || member.role !== 'hunter') return publicPlayer(member)
       const { hunterClass, hunterClasses, ...visible } = publicPlayer(member)
       return { ...visible, classReady: hunterClasses ? hunterClasses.length === 3 : Boolean(hunterClass) }
@@ -146,11 +146,14 @@ export function createGameServer() {
         do {
           code = Array.from({ length: 6 }, () => alphabet[randomInt(alphabet.length)]).join('')
         } while (rooms.has(code))
-        const room = { code, host: host.id, players: [host], local: body.local === true, faction: 'researchers', stage: 'lobby', match: null }
+        const local = body.local === true
+        const playerCount = body.playerCount == null ? (local ? 3 : undefined) : Number(body.playerCount)
+        if (playerCount != null && (!Number.isInteger(playerCount) || playerCount < minPlayers || playerCount > maxPlayers)) {
+          throw new HttpError(400, 'Choose a match size of two, three, or four players.')
+        }
+        const room = { code, host: host.id, players: [host], local, playerCount, faction: 'researchers', stage: 'lobby', match: null }
         if (room.local) {
-          const requested = Number(body.playerCount)
-          const count = Number.isInteger(requested) && requested >= minPlayers && requested <= maxPlayers ? requested : 3
-          while (room.players.length < count) room.players.push(makePlayer('Player ' + (room.players.length + 1)))
+          while (room.players.length < playerCount) room.players.push(makePlayer('Player ' + (room.players.length + 1)))
         }
         rooms.set(code, room)
         const localSeats = room.local ? room.players.map(localPlayer) : undefined
@@ -164,7 +167,7 @@ export function createGameServer() {
       if (method === 'POST' && endpoint === 'seats') {
         const body = await bodyOf(request)
         if (room.stage !== 'lobby') throw new HttpError(409, 'This expedition has already launched.')
-        if (room.local || room.players.length >= maxPlayers) throw new HttpError(409, 'This lobby is full.')
+        if (room.local || room.players.length >= (room.playerCount ?? maxPlayers)) throw new HttpError(409, 'This lobby is full.')
         const player = makePlayer(playerName(body.name, 'Player ' + (room.players.length + 1)))
         room.players.push(player)
         json(response, 201, { token: player.token, view: view(room, player) })
@@ -201,7 +204,8 @@ export function createGameServer() {
         json(response, 200, view(room, player))
       } else if (method === 'POST' && endpoint === 'start') {
         if (room.host !== player.id) throw new HttpError(403, 'Only the host can start the expedition.')
-        if (room.players.length < minPlayers) throw new HttpError(409, 'At least two players are needed to launch.')
+        const required = room.playerCount ?? minPlayers
+        if (room.players.length < required) throw new HttpError(409, 'This match needs ' + required + ' players to launch.')
         if (room.stage === 'lobby') {
           assignRoles(room.players)
           if (room.players.length === 2) room.players.find(member => member.role === 'hunter').hunterClasses = []

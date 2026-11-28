@@ -1209,6 +1209,42 @@ test('a 1v1 commander selects, switches, and separately acts with three research
   }
 })
 
+test('Host and Join support fixed-size 1v1, 2v1, and 3v1 matches', async () => {
+  const request = roomClient()
+  for (const playerCount of [2, 3, 4]) {
+    const host = (await request('POST', '/api/rooms', { name: 'Host', playerCount: String(playerCount) })).body
+    assert.equal(host.localSeats, undefined)
+    assert.equal(host.view.minPlayers, playerCount)
+    assert.equal(host.view.maxPlayers, playerCount)
+    const base = '/api/rooms/' + host.view.code + '/'
+    const hunters = []
+    for (let seat = 1; seat < playerCount; seat++) {
+      assert.equal((await request('POST', base + 'start', {}, host.token)).status, 409)
+      const joined = await request('POST', base + 'seats', { name: 'Hunter ' + seat })
+      assert.equal(joined.status, 201)
+      assert.equal(joined.body.view.maxPlayers, playerCount)
+      hunters.push(joined.body.token)
+    }
+    assert.equal((await request('POST', base + 'seats', { name: 'Extra' })).status, 409)
+    await request('POST', base + 'preference', { preference: 'cryptid' }, host.token)
+    assert.equal((await request('POST', base + 'start', {}, host.token)).body.stage, 'loadout')
+    await request('POST', base + 'species', { species: 'Sasquatch' }, host.token)
+
+    const classes = ['ranger', 'biker', 'trapper']
+    if (playerCount === 2) {
+      for (const hunterClass of classes) await request('POST', base + 'class', { hunterClass }, hunters[0])
+    } else {
+      for (const [index, token] of hunters.entries()) {
+        await request('POST', base + 'class', { hunterClass: classes[index] }, token)
+      }
+    }
+    const match = (await request('GET', base + 'state', null, hunters[0])).body.match
+    assert.equal(match.hunters.length, playerCount === 3 ? 2 : 3)
+    assert.equal(match.controlledHunterIds.length, playerCount === 2 ? 3 : 1)
+    assert.equal(match.supportGrant, playerCount === 3 ? 600 : 0)
+  }
+})
+
 test('a 2v1 lobby gives each researcher one unit and the team a support grant', async () => {
   const request = roomClient()
   const host = (await request('POST', '/api/rooms', { name: 'Ranger' })).body
