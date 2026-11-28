@@ -24,6 +24,7 @@ const equip = (hunter, ...types) => hunter.gear.push(...types.map(type => ({ id:
 test('hunter actions interleave and Search, netgun, move, capture ends the match immediately', () => {
   const state = game('Sasquatch')
   for (const hunter of state.hunters) equip(hunter, 'netgun')
+  equip(state.hunters[1], 'dart')
   state.hunters[0].pos = state.cryptid.pos = 'D6'
   doAction(state, 'a', 'search')
   doAction(state, 'b', 'move', 'D6')
@@ -134,7 +135,7 @@ test('a hunter can follow a Cryptid that ran through their space and net it with
   assert.ok(matchView(state, 'a').actions.some(action => action.type === 'shoot'))
   doAction(state, 'a', 'shoot')
   assert.equal(matchView(state, 'b').cryptid.restrained, true)
-  assert.equal(state.hunters[0].ap, 2)
+  assert.equal(state.hunters[0].ap, 1)
 })
 
 test('unseen movement leaves the last-known marker behind and still requires a search', () => {
@@ -153,30 +154,23 @@ test('unseen movement leaves the last-known marker behind and still requires a s
   assert.equal(state.cryptid.seen, null)
 })
 
-test('snares interrupt in-space interactions for free and wipe out remaining movement', () => {
+test('the reinforced net costs 2 AP and cannot be escaped during either capture window', () => {
   const state = game()
   state.cryptid.pos = CAMP
-  const traps = [device('anchor', 'D6'), device('anchor', 'D6')]
-  const tent = device('tent', 'D6')
-  state.devices.push(...traps, tent)
-  cryptidPhase(state)
-  state.cryptid.ap = 4
-  doAction(state, 'c', 'move', 'D6')
-  assert.equal(state.cryptid.restraint.device, traps[0].id)
-  doAction(state, 'c', 'escape')
-  assert.equal(state.cryptid.restraint, null)
-  doAction(state, 'c', 'destroy', tent.id)
-  assert.ok(state.devices.includes(tent))
-  assert.equal(state.cryptid.ap, 2)
-  assert.equal(state.cryptid.restraint.device, traps[1].id)
-  doAction(state, 'c', 'escape')
-  assert.equal(state.cryptid.movement, 0)
-  assert.throws(() => doAction(state, 'c', 'move', CAMP), /no movement left/)
-  doAction(state, 'c', 'end')
-  for (const actor of ['a', 'b']) doAction(state, actor, 'end')
-  assert.equal(state.cryptid.movement, 3)
+  equip(state.hunters[0], 'netgun')
+  doAction(state, 'a', 'search')
+  doAction(state, 'a', 'shoot')
+  assert.equal(state.hunters[0].ap, 0)
+  assert.equal(state.cryptid.restraint.kind, 'reinforcedNet')
+  for (let night = 0; night < 2; night++) {
+    for (const actor of ['a', 'b']) doAction(state, actor, 'end')
+    assert.ok(!matchView(state, 'c').actions.some(action => action.type === 'escape'))
+    assert.throws(() => doAction(state, 'c', 'escape'), /cannot escape/)
+    doAction(state, 'c', 'end')
+  }
   assert.equal(state.cryptid.restraint, null)
 })
+
 
 test('feeding at maximum hunger suppresses warnings, and starving creates different relative bearings', () => {
   const state = game()
@@ -249,6 +243,13 @@ test('a swallowed tag follows silently through the next Cryptid turn and grants 
   assert.deepEqual(matchView(state, 'b').player.digital, [])
   assert.deepEqual(matchView(state, 'c').logs, cryptidLog)
   assert.ok(!cryptidLog.some(entry => /scat|tag/.test(entry.message)))
+  doAction(state, 'a', 'move', CAMP)
+  doAction(state, 'a', 'submit', undefined, { site: CAMP })
+  const teammate = matchView(state, 'b')
+  assert.deepEqual(teammate.lab, { footprint: false, remains: false, identified: true })
+  assert.equal(teammate.species, 'Sasquatch')
+  assert.ok(teammate.logs.some(item => item.message.includes('swallowed-tracker scat')))
+  assert.deepEqual(matchView(state, 'c').logs, cryptidLog)
 })
 
 test('Search lists surviving visits with precise age and an authentic track pattern', () => {
@@ -382,9 +383,9 @@ test('Mothman flies past blocked routes and intermediate hazards but resolves th
   state.hunters[0].pos = 'C2'
   state.hunters[1].pos = 'D2'
   const middle = device('snare', 'C2')
-  const landing = device('aerial', 'D2')
+  const landing = device('lamp', 'D2')
   const camera = device('camera', 'B2')
-  state.devices.push(middle, landing, camera, { ...device('blockade', 'C2'), to: 'D2' })
+  state.devices.push(middle, landing, camera, { ...device('blockade', 'B2'), to: 'C2' })
   cryptidPhase(state)
   state.cryptid.ap = 6
   assert.equal(MAP.B2.exits.E, undefined)
@@ -399,7 +400,7 @@ test('Mothman flies past blocked routes and intermediate hazards but resolves th
   assert.equal(state.cryptid.ap, 2)
   assert.equal(state.cryptid.restraint.device, landing.id)
   assert.equal(state.cryptid.movement, 0)
-  doAction(state, 'c', 'escape')
+  assert.throws(() => doAction(state, 'c', 'escape'), /cannot escape/)
   assert.deepEqual(matchView(state, 'c').moves, [])
   assert.equal(matchView(state, 'a').cryptid.pos, 'D2')
   assert.ok(state.devices.includes(middle))
@@ -484,11 +485,11 @@ test('the Trail Biker pays AP to mount or dismount and keeps movement spent acro
   assert.equal(state.cryptidSnares[0].activated, undefined)
 })
 
-test('the Prepper starts with a loaded netgun, four slots and $200 extra team cash', () => {
+test('the Expedition Quartermaster starts with a loaded tranquilizer gun, four slots and $200 extra team cash', () => {
   const state = game('Sasquatch', { a: 'prepper' })
   const hunter = state.hunters[0]
   assert.equal(state.cash, 2800)
-  assert.deepEqual(hunter.gear.map(({ type, qty }) => [type, qty]), [['netgun', 2]])
+  assert.deepEqual(hunter.gear.map(({ type, qty }) => [type, qty]), [['tranqGun', 1]])
   assert.equal(matchView(state, 'a').player.equipmentCapacity, 4)
   assert.equal(matchView(state, 'b').player.equipmentCapacity, 3)
   for (const type of ['kit', 'detector', 'snare']) {
@@ -500,12 +501,12 @@ test('the Prepper starts with a loaded netgun, four slots and $200 extra team ca
   assert.throws(() => doAction(state, 'a', 'takeGear', state.cache.gear[0].id), /No free equipment slot/)
 })
 
-test('the Trapper starts with an anchored snare and can deploy one per round at zero AP', () => {
+test('the Trapper starts with wildlife snares and can deploy one per round at zero AP', () => {
   const state = game('Sasquatch', { a: 'trapper' })
   const [trapper, teammate] = state.hunters
   const deploySnare = () => matchView(state, 'a').actions.find(action => action.type === 'deploy' && action.target === 'snare')
-  assert.deepEqual(trapper.gear.map(({ type, qty }) => [type, qty]), [['anchor', 1]])
-  equip(trapper, 'snare', 'detector')
+  assert.deepEqual(trapper.gear.map(({ type, qty }) => [type, qty]), [['snare', 3]])
+  equip(trapper, 'detector')
   doAction(state, 'a', 'move', 'D6')
   doAction(state, 'a', 'search')
   for (let i = 0; i < 2; i++) doAction(state, 'a', 'deploy', 'detector')
@@ -547,6 +548,112 @@ test('the True Believer privately identifies false tracks and earns 25% more on 
   assert.deepEqual(matchView(state, 'b').player.digital.map(item => item.value), [75, 31])
   doAction(state, 'b', 'submit')
   assert.equal(state.cash, 2816)
+})
+
+test('equipment stays hidden until the Cryptid triggers it, and silent cameras stay hidden', () => {
+  const state = game('Jersey Devil')
+  state.animals = []
+  state.cryptid.pos = 'D5'
+  const camera = device('camera', 'D6')
+  const detector = device('detector', 'D6')
+  const tent = device('tent', 'D6')
+  const blockade = { ...device('blockade', 'D6'), to: CAMP }
+  state.devices.push(camera, detector, tent, blockade)
+  cryptidPhase(state)
+  assert.deepEqual(matchView(state, 'c').devices, [])
+  doAction(state, 'c', 'move', 'D6')
+  assert.ok(camera.recordings.some(recording => recording.type === 'cryptidVideo'))
+  assert.deepEqual(matchView(state, 'c').devices.map(item => item.id), [detector.id, tent.id])
+  assert.ok(!matchView(state, 'c').actions.some(item => item.type === 'destroy' && item.target === camera.id))
+  assert.ok(matchView(state, 'c').moves.includes(CAMP))
+  doAction(state, 'c', 'move', CAMP)
+  assert.equal(state.cryptid.pos, 'D6')
+  assert.equal(state.cryptid.movement, 2)
+  assert.deepEqual(matchView(state, 'c').devices.map(item => item.id), [detector.id, tent.id, blockade.id])
+  assert.ok(!matchView(state, 'c').moves.includes(CAMP))
+})
+
+test('the field lab combines a genuine track photo and physically collected feeding remains across researchers', () => {
+  const state = game('Mimic')
+  const fake = evidence('tracks', CAMP, 1, { dir: 'N', falseTrail: true })
+  const remains = evidence('feed', CAMP, 1)
+  const authentic = evidence('tracks', CAMP, 1, { dir: 'W' })
+  state.clues.push(fake, remains)
+  doAction(state, 'a', 'search')
+  doAction(state, 'a', 'submit', undefined, { site: CAMP })
+  assert.deepEqual(matchView(state, 'b').lab, { footprint: false, remains: false, identified: false })
+  assert.equal(matchView(state, 'b').species, undefined)
+  doAction(state, 'a', 'collect', remains.id)
+  doAction(state, 'a', 'submit', undefined, { site: CAMP })
+  assert.deepEqual(matchView(state, 'b').lab, { footprint: false, remains: true, identified: false })
+  state.clues.push(authentic)
+  doAction(state, 'b', 'search')
+  doAction(state, 'b', 'submit', undefined, { site: CAMP })
+  const view = matchView(state, 'a')
+  assert.deepEqual(view.lab, { footprint: true, remains: true, identified: true })
+  assert.equal(view.species, 'Mimic')
+  assert.equal(view.clues.find(clue => clue.id === authentic.id).name, 'Mimic tracks west')
+  assert.ok(view.logs.some(item => item.message.includes('The field lab identified Mimic')))
+  assert.equal(matchView(state, 'c').lab, undefined)
+})
+
+test('searching discovers local gear and the disguised Mimic cannot sabotage it', () => {
+  const state = game('Mimic')
+  state.cryptid.pos = 'D6'
+  const camera = device('camera', 'D6')
+  const remote = device('detector', 'D5')
+  state.devices.push(camera, remote)
+  for (const actor of ['a', 'b']) doAction(state, actor, 'end')
+  assert.throws(() => doAction(state, 'c', 'destroy', camera.id), /cannot be destroyed/)
+  doAction(state, 'c', 'searchEquipment')
+  assert.equal(state.cryptid.ap, 7)
+  assert.deepEqual(matchView(state, 'c').devices.map(item => item.id), [camera.id])
+
+  state.cryptid.ultimateUnlocked = true
+  state.cryptid.ap = 8
+  doAction(state, 'c', 'ultimate', 'rabbit')
+  state.cryptid.ap = 1
+  assert.ok(!matchView(state, 'c').actions.some(action => action.type === 'destroy'))
+  assert.throws(() => doAction(state, 'c', 'destroy', camera.id), /animal form/)
+  assert.ok(state.devices.includes(camera))
+  const sasquatch = game()
+  cryptidPhase(sasquatch)
+  assert.ok(!matchView(sasquatch, 'c').actions.some(action => action.type === 'searchEquipment'))
+  assert.throws(() => doAction(sasquatch, 'c', 'searchEquipment'), /senses equipment automatically/)
+})
+
+test('a regular wildlife snare stops the Cryptid until it spends 2 AP to escape', () => {
+  const state = game('Chupacabra')
+  state.cryptid.pos = 'D5'
+  const snare = device('snare', 'D6')
+  state.devices.push(snare)
+  cryptidPhase(state)
+  doAction(state, 'c', 'move', 'D6')
+  assert.equal(state.cryptid.restraint.device, snare.id)
+  assert.equal(state.cryptid.movement, 0)
+  assert.ok(matchView(state, 'c').actions.some(action => action.type === 'escape'))
+  doAction(state, 'c', 'escape')
+  assert.equal(state.cryptid.ap, 0)
+  assert.equal(state.cryptid.movement, 0)
+  assert.equal(state.cryptid.restraint, null)
+  assert.ok(!state.devices.includes(snare))
+})
+
+test('a backpack tent costs 2 AP to set up and accepts evidence submissions', () => {
+  const state = game('Mimic')
+  const hunter = state.hunters[0]
+  hunter.pos = 'D6'
+  equip(hunter, 'tent')
+  state.clues.push(evidence('tracks', hunter.pos, 1))
+  const deploy = matchView(state, 'a').actions.find(action => action.type === 'deploy' && action.target === 'tent')
+  assert.ok(deploy.label.endsWith(' · 2 AP'))
+  doAction(state, 'a', 'deploy', 'tent')
+  assert.equal(hunter.ap, 1)
+  const tent = state.devices[0]
+  doAction(state, 'a', 'search')
+  doAction(state, 'a', 'submit', undefined, { site: tent.id })
+  assert.equal(hunter.ap, 0)
+  assert.equal(matchView(state, 'b').lab.footprint, true)
 })
 
 test('Sasquatch passively senses eight neighboring sectors through blocked edges', () => {
@@ -620,7 +727,9 @@ test('hunters get neither hidden Cryptid coordinates nor undiscovered wildlife; 
   doAction(state, 'a', 'search')
   doAction(state, 'b', 'deploy', 'tent')
   doAction(state, 'a', 'buy', 'tag')
-  assert.equal(JSON.stringify(matchView(state, 'c')), before)
+  const after = matchView(state, 'c')
+  assert.deepEqual(after.devices.map(item => item.type), ['tent'])
+  assert.equal(JSON.stringify({ ...after, devices: [] }), before)
   assert.equal(matchView(state, 'a').cryptid.live, true)
 })
 
@@ -807,30 +916,83 @@ test('hunter map highlights the newest active clue round without hiding clue his
   assert.equal(clues.find(clue => clue.id === old.id).date, 'Cold')
 })
 
-test('an expedition member must search a trap alert before confirming its Cryptid', () => {
-  const state = game()
-  const trap = device('anchor', 'D6')
-  state.devices.push(trap)
+test('Fly and Long Flight stop at the first lamp and do not expose it in the flight menu', () => {
+  for (const [type, intended] of [['ability', 'D2'], ['ultimate', 'F2']]) {
+    const state = game('Mothman')
+    state.cryptid.pos = 'B2'
+    const first = device('lamp', 'C2')
+    const second = device('lamp', 'D2')
+    state.devices.push(second, first)
+    for (const actor of ['a', 'b']) doAction(state, actor, 'end')
+    state.cryptid.ultimateUnlocked = true
+    const option = matchView(state, 'c').actions.find(action => action.type === type && action.target === 'E')
+    assert.ok(option.label.includes(intended))
+    doAction(state, 'c', type, 'E')
+    assert.equal(state.cryptid.pos, 'C2')
+    assert.equal(state.cryptid.restraint.device, first.id)
+    assert.equal(state.cryptid.movement, 0)
+    assert.equal(first.activated, 1)
+    assert.equal(second.activated, null)
+    assert.ok(matchView(state, 'c').logs.some(entry => entry.message.includes('forced you to land at C2')))
+  }
+})
+
+test('a lamp alert requires Search and a dart for live capture', () => {
+  const state = game('Mothman')
+  const lamp = device('lamp', 'D6')
+  state.devices.push(lamp)
   state.cryptid.pos = CAMP
+  equip(state.hunters[0], 'dart')
   cryptidPhase(state)
   doAction(state, 'c', 'move', 'D6')
-  assert.equal(state.cryptid.restraint.device, trap.id)
-  const view = matchView(state, 'a')
-  assert.equal(view.cryptid, null)
-  assert.deepEqual(view.devices[0], { id: trap.id, type: 'anchor', pos: 'D6', activated: 1 })
-  assert.equal(view.logs[0].message, 'Snare activated at D6.')
-  assert.equal(view.logs[0].equipmentAlert, true)
+  assert.equal(state.cryptid.restraint.kind, 'mesmerized')
+  assert.equal(matchView(state, 'a').cryptid, null)
+  assert.equal(lamp.activated, 1)
   doAction(state, 'c', 'end')
   doAction(state, 'a', 'move', 'D6')
-  assert.equal(matchView(state, 'b').cryptid, null)
-  assert.equal(trap.activated, 1)
+  assert.ok(!matchView(state, 'a').actions.some(action => action.type === 'capture'))
   doAction(state, 'a', 'search')
-  assert.equal(trap.activated, null)
-  assert.deepEqual(matchView(state, 'b').cryptid, { pos: 'D6', live: true, restrained: true, name: 'Sasquatch' })
+  assert.equal(lamp.activated, null)
   assert.ok(matchView(state, 'a').actions.some(action => action.type === 'capture'))
   doAction(state, 'a', 'capture')
   assert.equal(state.winner, 'hunters')
 })
+
+test('a lamp reserves its sector and burns out after two Mothman capture windows', () => {
+  const state = game('Mothman', { a: 'ranger' })
+  state.cryptid.pos = 'D5'
+  const [researcher] = state.hunters
+  researcher.pos = 'D6'
+  equip(researcher, 'lamp', 'detector')
+  doAction(state, 'a', 'deploy', 'detector')
+  const detector = state.devices[0]
+  assert.throws(() => doAction(state, 'a', 'deploy', 'lamp'), /free of other equipment/)
+  doAction(state, 'a', 'recover', detector.id)
+  doAction(state, 'a', 'deploy', 'lamp')
+  const lamp = state.devices[0]
+  const teammate = state.hunters[1]
+  teammate.pos = 'D6'
+  equip(teammate, 'detector')
+  assert.throws(() => doAction(state, 'b', 'deploy', 'detector'), /free of other equipment/)
+  teammate.pos = CAMP
+  researcher.pos = CAMP
+  researcher.ap = 1
+  assert.ok(!matchView(state, 'a').blockadeTargets.includes('D6'))
+  for (const actor of ['a', 'b']) doAction(state, actor, 'end')
+  doAction(state, 'c', 'move', 'D6')
+  doAction(state, 'c', 'end')
+  for (let night = 0; night < 2; night++) {
+    assert.ok(state.devices.includes(lamp))
+    for (const actor of ['a', 'b']) doAction(state, actor, 'end')
+    assert.equal(state.cryptid.movement, 0)
+    assert.throws(() => doAction(state, 'c', 'ability', 'N'), /lost your movement/)
+    doAction(state, 'c', 'end')
+  }
+  assert.equal(state.cryptid.restraint, null)
+  assert.ok(!state.devices.includes(lamp))
+  assert.ok(matchView(state, 'a').logs.some(item => item.equipmentAlert && item.message.includes('lamp broke')))
+})
+
 
 test('searching an occupied snare sector reveals wildlife and lets Hunters harvest it', () => {
   const state = createMatch(seats, 'Sasquatch', () => 0, 'hunters')
@@ -1325,7 +1487,7 @@ test('foraging reduces hunger once per Night and flushing wildlife can trigger d
 
 test('factions expose six exclusive roles and enforce their purchases in the lobby and match', async () => {
   for (const [faction, classes, gearType, forbidden, price] of [
-    ['researchers', ['ranger', 'biologist', 'rescue'], 'anchor', 'rifle', 125],
+    ['researchers', ['ranger', 'biologist', 'rescue'], 'dart', 'rifle', 250],
     ['hunters', ['armorer', 'marksman', 'tracker'], 'rifle', 'lowLight', 131],
     ['fans', ['producer', 'naturalist', 'videographer'], 'lowLight', 'netgun', 105],
   ]) {
@@ -1353,7 +1515,7 @@ test('factions expose six exclusive roles and enforce their purchases in the lob
   }
 })
 
-test('the Blood Tracker sees the real direction after a false trail and a sneak', () => {
+test('the Tracker sees the real direction after a false trail and a sneak', () => {
   const state = createMatch(seats.map(seat => ({ ...seat, hunterClass: seat.id === 'a' ? 'tracker' : undefined })),
     'Sasquatch', () => 0, 'hunters')
   state.cryptid.pos = CAMP
@@ -1414,16 +1576,85 @@ test('direct footprint and Cryptid photographs cost the same as Search even for 
 
 test('selling a Cryptid photo names the species in the team log', () => {
   const state = game('Jersey Devil')
-  state.cryptid.pos = CAMP
   state.clues.push(evidence('tracks', CAMP, 1, { dir: 'W' }))
+  doAction(state, 'b', 'search')
+  state.cryptid.pos = CAMP
   doAction(state, 'a', 'search')
+  assert.deepEqual(matchView(state, 'a').player.digital.map(item => item.type), ['sighting'])
   assert.equal(matchView(state, 'b').clues.find(clue => clue.type === 'tracks').name, 'Cryptid tracks west')
   assert.ok(matchView(state, 'a').player.digital.some(item => item.type === 'sighting' && item.photo))
   assert.ok(!matchView(state, 'b').logs.some(item => item.message.includes('identified the species')))
   doAction(state, 'a', 'submit', undefined, { site: CAMP })
   assert.ok(matchView(state, 'b').logs.some(item => item.message.includes('identified the species as Jersey Devil')))
   assert.equal(matchView(state, 'b').clues.find(clue => clue.type === 'tracks').name, 'Jersey Devil tracks west')
+  assert.deepEqual(matchView(state, 'b').lab, { footprint: false, remains: false, identified: true })
   assert.equal(matchView(state, 'a').player.digital.length, 0)
+})
+
+test('only a Marksman carrying a rangefinder can scan adjacent sectors without searching evidence', () => {
+  const state = createMatch(seats.map(seat => ({ ...seat, hunterClass: seat.id === 'a' ? 'marksman' : 'tracker' })),
+    'Sasquatch', () => 0, 'hunters')
+  state.cryptid.pos = 'D6'
+  state.clues.push(evidence('tracks', 'D6', 1), evidence('feed', 'D6', 1))
+  state.animals[0].pos = 'D6'
+  equip(state.hunters[1], 'rangefinder')
+  assert.equal(matchView(state, 'b').player.className, 'Tracker')
+  assert.ok(!matchView(state, 'b').actions.some(action => action.type === 'rangefinderScan'))
+  assert.throws(() => doAction(state, 'b', 'rangefinderScan', 'D6'), /Marksman/)
+  assert.throws(() => doAction(state, 'a', 'rangefinderScan', 'D5'), /connected adjacent sector/)
+  assert.equal(matchView(state, 'a').cryptid, null)
+  doAction(state, 'a', 'rangefinderScan', 'E7')
+  assert.equal(matchView(state, 'b').cryptid, null)
+  doAction(state, 'a', 'rangefinderScan', 'D6')
+  const view = matchView(state, 'a')
+  assert.equal(view.player.ap, 1)
+  assert.equal(view.cryptid.pos, 'D6')
+  assert.equal(view.cryptid.live, true)
+  assert.ok(view.clues.every(clue => clue.type === 'sighting'))
+  assert.deepEqual(view.player.digital, [])
+  assert.deepEqual(view.animals, [])
+  doAction(state, 'a', 'move', 'D6')
+  assert.equal(matchView(state, 'a').player.searchedHere, false)
+})
+
+test('the Quartermaster can reload the same tranquilizer gun and use its loaded dart to capture', () => {
+  const state = game('Sasquatch', { a: 'prepper' })
+  const gun = state.hunters[0].gear[0]
+  gun.qty = 0
+  equip(state.hunters[0], 'dart')
+  doAction(state, 'a', 'reload', gun.id)
+  assert.equal(gun.qty, 1)
+  assert.deepEqual(state.hunters[0].gear.map(item => item.type), ['tranqGun'])
+  state.cryptid.pos = CAMP
+  state.cryptid.restraint = { kind: 'reinforcedNet' }
+  state.cryptid.seen = evidence('sighting', CAMP, 1)
+  assert.ok(matchView(state, 'a').actions.some(action => action.type === 'capture'))
+  doAction(state, 'a', 'capture')
+  assert.equal(state.winner, 'hunters')
+  assert.equal(gun.qty, 0)
+  assert.equal(state.hunters[0].gear[0], gun)
+})
+
+test('a passive rangefinder adds one connected sector at a 40 percent miss chance', () => {
+  for (const [roll, wounded] of [[.399, false], [.4, true]]) {
+    const state = createMatch(seats, 'Sasquatch', () => 0, 'hunters')
+    state.cryptid.pos = 'D6'
+    const [shooter, spotter] = state.hunters
+    spotter.pos = 'D6'
+    equip(shooter, 'rifle')
+    doAction(state, 'b', 'search')
+    assert.throws(() => doAction(state, 'a', 'fireRifle'), /within range/)
+    equip(shooter, 'rangefinder')
+    state.random = () => roll
+    const shot = matchView(state, 'a').actions.find(action => action.type === 'fireRifle')
+    assert.ok(shot.label.includes('40% miss chance'))
+    assert.ok(!matchView(state, 'a').actions.some(action => action.type === 'range'))
+    doAction(state, 'a', 'fireRifle')
+    assert.equal(state.cryptid.wounded, wounded)
+    assert.equal(shooter.gear[0].qty, 1)
+    assert.equal(shooter.ap, 1)
+    assert.equal(shooter.shotRound, state.round)
+  }
 })
 
 test('a Hunters team must confirm the Cryptid and land two shots, with one shot per unit per Day', () => {
@@ -1567,29 +1798,72 @@ test('the Chupacabra lures wildlife and needs five meals across three Nights and
   assert.equal(matchView(state, 'c').ultimate.unlocked, true)
 })
 
-test('the new capture traps trigger only on their matching species and special action', () => {
-  for (const [species, trapType, type] of [['Jersey Devil', 'resonance', 'ability'], ['Chupacabra', 'baitCage', 'feed'], ['Mimic', 'voiceTrap', 'ability']]) {
-    const state = game(species)
-    state.cryptid.pos = 'D5'
-    const trap = device(trapType, 'D6')
-    state.devices.push(trap)
-    if (species === 'Mimic') state.devices.push(device('detector', 'D3'))
-    cryptidPhase(state)
-    state.cryptid.ap = 5
-    doAction(state, 'c', 'move', 'D6')
-    assert.equal(state.cryptid.restraint, null)
-    const animal = state.animals[0]
-    animal.pos = 'D6'
-    doAction(state, 'c', type, type === 'feed' ? animal.id : species === 'Mimic' ? 'D5' : undefined)
-    assert.equal(state.cryptid.restraint.device, trap.id)
-    assert.equal(matchView(state, 'c').goal.progress, 0)
-    doAction(state, 'c', 'end')
-    doAction(state, 'a', 'move', 'D6')
-    doAction(state, 'a', 'search')
-    doAction(state, 'a', 'capture')
-    assert.equal(state.winner, 'hunters')
-  }
+test('a reflector stuns the Jersey Devil when it shrieks and a dart captures it', () => {
+  const state = game('Jersey Devil')
+  state.cryptid.pos = 'D5'
+  doAction(state, 'a', 'buy', 'reflector')
+  const reflector = state.cache.gear.find(item => item.type === 'reflector')
+  assert.equal(matchView(state, 'b').shop.reflector, undefined)
+  assert.throws(() => doAction(state, 'b', 'buy', 'reflector'), /already bought/)
+  doAction(state, 'b', 'takeGear', reflector.id)
+  assert.throws(() => doAction(state, 'b', 'deploy', 'reflector'), /deployable equipment/)
+  equip(state.hunters[0], 'dart')
+  cryptidPhase(state)
+  state.cryptid.ap = 5
+  doAction(state, 'c', 'move', 'D6')
+  assert.equal(state.cryptid.restraint, null)
+  doAction(state, 'c', 'ability')
+  assert.equal(state.cryptid.restraint.kind, 'stunned')
+  assert.equal(matchView(state, 'c').goal.progress, 0)
+  doAction(state, 'c', 'end')
+  doAction(state, 'a', 'move', 'D6')
+  doAction(state, 'a', 'search')
+  doAction(state, 'a', 'capture')
+  assert.equal(state.winner, 'hunters')
 })
+
+test('the Jersey Devil can break a regular net on its next Night', () => {
+  const state = game('Jersey Devil')
+  state.cryptid.pos = CAMP
+  equip(state.hunters[0], 'regularNet')
+  doAction(state, 'a', 'search')
+  doAction(state, 'a', 'shoot')
+  assert.equal(state.hunters[0].ap, 1)
+  assert.equal(state.cryptid.restraint.kind, 'regularNet')
+  for (const actor of ['a', 'b']) doAction(state, actor, 'end')
+  doAction(state, 'c', 'escape')
+  assert.equal(state.cryptid.restraint, null)
+})
+
+test('Chupacabra sleeps after eating three separately dosed snared animals and can be caught without a dart', () => {
+  const state = game('Chupacabra')
+  state.cryptid.pos = 'D5'
+  const animals = state.animals.slice(0, 3)
+  state.animals = animals
+  const [a, b] = state.hunters
+  a.pos = b.pos = 'D6'
+  for (const animal of animals) {
+    animal.pos = 'D6'
+    const snare = device('snare', 'D6')
+    state.devices.push(snare)
+    animal.snare = snare.id
+  }
+  equip(a, 'sleepingPill', 'sleepingPill', 'sleepingPill')
+  assert.throws(() => doAction(state, 'a', 'doseBait', animals[0].id), /discovered, snared animal/)
+  doAction(state, 'b', 'search')
+  doAction(state, 'a', 'doseBait', animals[0].id)
+  assert.throws(() => doAction(state, 'a', 'doseBait', animals[0].id), /has not been dosed/)
+  for (const animal of animals.slice(1)) doAction(state, 'a', 'doseBait', animal.id)
+  for (const actor of ['a', 'b']) doAction(state, actor, 'end')
+  doAction(state, 'c', 'move', 'D6')
+  for (const animal of animals) doAction(state, 'c', 'feed', animal.id)
+  assert.equal(state.cryptid.restraint.kind, 'asleep')
+  assert.equal(state.cryptid.restraint.releaseAfterNight, state.round + 4)
+  doAction(state, 'c', 'end')
+  doAction(state, 'b', 'search')
+  assert.equal(state.winner, 'hunters')
+})
+
 
 test('the Mimic unlocks Animal Form after four investigated spoofed alerts and at least two investigators', () => {
   const state = game('Mimic')
@@ -1779,40 +2053,60 @@ test('Phantom Trigger selects only remote equipment and spoofs its alert without
   assert.equal(matchView(state, 'a').devices.find(item => item.id === second.id).activated, null)
 })
 
-test('Mimic animal form leaves animal tracks, can be snared and tagged, and expires after two Days', () => {
+test('a wildlife snare breaks the Mimic disguise and enables net and dart capture', () => {
   const state = game('Mimic')
   state.cryptid.pos = 'D5'
   state.animals = []
-  const observer = state.hunters[0]
-  observer.pos = 'D6'
-  equip(observer, 'snare', 'tag')
-  doAction(state, 'a', 'deploy', 'snare')
-  doAction(state, 'a', 'move', CAMP)
+  state.devices.push(device('snare', 'D6'))
+  equip(state.hunters[0], 'regularNet', 'dart')
   for (const actor of ['a', 'b']) doAction(state, actor, 'end')
   state.cryptid.ultimateUnlocked = true
   doAction(state, 'c', 'ultimate', 'rabbit')
   doAction(state, 'c', 'move', 'D6')
-  const disguise = state.cryptid.disguise
-  assert.ok(disguise.snare)
-  assert.equal(state.cryptid.movement, 0)
-  assert.ok(state.clues.some(clue => clue.type === 'animalTracks' && clue.animalSpecies === 'rabbit' && clue.pos === 'D5'))
-  assert.ok(!state.clues.some(clue => clue.type === 'tracks'))
+  assert.equal(state.cryptid.disguise, undefined)
+  assert.equal(state.cryptid.restraint.kind, 'snare')
+  assert.ok(state.clues.some(clue => clue.type === 'animalTracks' && clue.animalSpecies === 'rabbit'))
   doAction(state, 'c', 'end')
   doAction(state, 'a', 'move', 'D6')
-  assert.equal(matchView(state, 'a').cryptid, null)
-  doAction(state, 'a', 'search')
-  assert.ok(matchView(state, 'a').actions.some(item => item.type === 'tag' && item.target === disguise.id))
-  doAction(state, 'a', 'tag', disguise.id)
-  assert.ok(matchView(state, 'a').animals.some(item => item.id === disguise.id && item.tagged))
-  for (const actor of ['a', 'b']) doAction(state, actor, 'end')
-  assert.equal(state.cryptid.disguise, disguise)
-  doAction(state, 'c', 'end')
-  assert.equal(state.cryptid.disguise, disguise)
-  for (const actor of ['a', 'b']) doAction(state, actor, 'end')
-  assert.equal(state.cryptid.disguise, undefined)
-  assert.equal(matchView(state, 'a').cryptid.name, 'Mimic')
-  assert.equal(matchView(state, 'a').cryptid.tagged, true)
+  doAction(state, 'a', 'shoot')
+  doAction(state, 'a', 'capture')
+  assert.equal(state.winner, 'hunters')
 })
+
+test('a dart alone can capture a Mimic still in animal form', () => {
+  const state = game('Mimic')
+  state.cryptid.pos = CAMP
+  const rabbit = state.animals[0]
+  rabbit.pos = CAMP
+  equip(state.hunters[0], 'dart')
+  for (const actor of ['a', 'b']) doAction(state, actor, 'end')
+  rabbit.pos = CAMP
+  state.cryptid.ultimateUnlocked = true
+  doAction(state, 'c', 'ultimate', 'rabbit')
+  doAction(state, 'c', 'end')
+  assert.throws(() => doAction(state, 'a', 'capture', state.cryptid.disguise.id), /observed wildlife/)
+  doAction(state, 'a', 'search')
+  const targets = matchView(state, 'a').actions.filter(action => action.type === 'capture')
+  assert.equal(targets.length, 2)
+  assert.ok(targets.every(action => action.label === 'Dart Rabbit · 2 AP'))
+  doAction(state, 'a', 'capture', state.cryptid.disguise.id)
+  assert.equal(state.winner, 'hunters')
+})
+
+test('the unbroken Mimic disguise lasts through two Days', () => {
+  const state = game('Mimic')
+  state.cryptid.pos = 'D5'
+  for (const actor of ['a', 'b']) doAction(state, actor, 'end')
+  state.cryptid.ultimateUnlocked = true
+  doAction(state, 'c', 'ultimate', 'rabbit')
+  for (let day = 0; day < 2; day++) {
+    doAction(state, 'c', 'end')
+    assert.ok(state.cryptid.disguise)
+    for (const actor of ['a', 'b']) doAction(state, actor, 'end')
+  }
+  assert.equal(state.cryptid.disguise, undefined)
+})
+
 
 test('a shot at the disguised Mimic consumes a round, reveals it, and ends only the shooter’s turn', () => {
   const state = createMatch(seats, 'Mimic', () => 0, 'hunters')

@@ -30,6 +30,7 @@ const targetActions = {
   sneak: { label: 'Sneak · 2 AP + 2 movement', prompt: 'Choose a direction to sneak' },
   mislead: { label: 'Leave false tracks · 1 AP', prompt: 'Choose a direction for false tracks' },
   flush: { label: 'Flush wildlife · 2 AP', prompt: 'Choose a direction to flush wildlife' },
+  rangefinderScan: { label: 'Scan with rangefinder · 1 AP', prompt: 'Choose an adjacent sector to scan' },
   checkCamera: { label: 'Check trail cameras · 2 AP', prompt: 'Choose a trail camera to search' },
 }
 let siteId
@@ -665,7 +666,7 @@ function renderMap(match) {
       const active = activated != null
       const label = gear[type].unit + (devices.length > 1 ? ' ×' + devices.length : '') +
         (active ? ' (active alert)' : devices[0].remembered ? ' (remembered)' : '')
-      const icon = { anchor: 'snare', aerial: 'snare', resonance: 'snare', baitCage: 'snare', voiceTrap: 'snare', lowLight: 'camera', mic: 'detector' }[type] ?? type
+      const icon = { lowLight: 'camera', mic: 'detector' }[type] ?? type
       units.push(mark(icon, label, 'device', { last: devices[0].remembered, alert: active, description: gear[type].description }))
     }
     const broken = localDevices.filter(device => device.broken)
@@ -778,7 +779,15 @@ function showTurn(match, blockadeOpen) {
         element('strong', '', player.ability.ability + (player.ability.passive ? ' · Passive' : ' · ' + player.ability.abilityCost + ' AP')),
         element('p', '', player.ability.description)))
     }
-    if (player.restrained) side.append(element('p', 'warning', 'Restrained. Spend 2 AP to escape.'))
+    if (player.restrained) {
+      const conditions = {
+        reinforcedNet: 'Held by the reinforced net until it wears out.',
+        mesmerized: 'Mesmerized by the lamp. Movement is blocked.',
+        stunned: 'Stunned by the reflector.',
+        asleep: 'Asleep from the dosed wildlife.',
+      }
+      side.append(element('p', 'warning', conditions[player.restraintKind] ?? 'Restrained. Spend 2 AP to escape.'))
+    }
     if (match.devices.some(device => device.type === 'blockade' && !device.broken && !device.remembered)) {
       side.append(element('p', 'hint', 'Blue barriers close the marked trails to ground movement. They stay closed until an expedition specialist recovers them.'))
     }
@@ -858,7 +867,7 @@ function showTurn(match, blockadeOpen) {
 
 function packLabel(pack) {
   const definition = gear[pack.type]
-  const quantity = ['netgun', 'rifle'].includes(pack.type) ? pack.qty + '/' + definition.size + ' shots' :
+  const quantity = ['netgun', 'regularNet', 'tranqGun', 'rifle'].includes(pack.type) ? pack.qty + '/' + definition.size + ' shots' :
     definition.size > 1 ? pack.qty + '/' + definition.size : ''
   return definition.name + (quantity ? ' · ' + quantity : '')
 }
@@ -917,6 +926,15 @@ function showSite(match) {
     button(name, () => atSite(type, target), 'secondary compact', disabled || !siteReady)
   side.append(element('div', 'context', element('strong', '', site.name),
     element('p', '', 'Site services cost zero actions. ' + (site.camp ? 'Shop, sell meat, and submit evidence.' : 'Store supplies and submit evidence.'))))
+  if (match.lab) {
+    const lab = match.lab
+    const result = lab.identified ? 'Species confirmed · ' + match.species :
+      'Authentic footprint photo · ' + (lab.footprint ? 'verified' : 'needed') +
+      ' | Collected feeding remains · ' + (lab.remains ? 'verified' : 'needed')
+    const panel = element('div', 'context', element('strong', '', 'Field lab'), element('p', '', result))
+    if (!lab.identified) panel.append(element('p', 'hint', 'A Cryptid photo or scat from a swallowed tracker identifies the species on its own.'))
+    side.append(panel)
+  }
   const canSubmit = player.digital.length || player.cargo.some(item => !item.species)
   const canSell = player.cargo.some(item => item.species)
   const sales = element('div', 'action-list',
@@ -930,7 +948,7 @@ function showSite(match) {
     const price = match.shop ? match.shop[type] : (definition.classGear ? undefined : definition.price)
     const packs = site.gear.filter(pack => pack.type === type)
     if (!packs.length && (!site.camp || price === undefined)) continue
-    const count = packs.reduce((sum, pack) => sum + (['netgun', 'rifle'].includes(type) ? 1 : pack.qty), 0)
+    const count = packs.reduce((sum, pack) => sum + (['netgun', 'regularNet', 'tranqGun', 'rifle'].includes(type) ? 1 : pack.qty), 0)
     const heading = itemRow(definition.name, definition.description, badge(count + ' stored'))
     if (site.camp && price !== undefined) heading.lastElementChild.append(transfer('Buy ' + money(price), 'buy', type, match.cash < price))
     store.push(heading)

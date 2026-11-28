@@ -41,6 +41,8 @@ const iconPaths = {
   camera: 'M4 7h5l1.5-2h3L15 7h5v12H4Zm11 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm2-3h1',
   detector: 'M12 5a7 7 0 0 1 7 7M12 2a10 10 0 0 1 10 10m-10 0 5-5m-2 11a6 6 0 1 1-6-10m6 10 2 2M12 12h.1',
   evidence: 'M16 10a6 6 0 1 1-12 0 6 6 0 0 1 12 0Zm-1.8 4.2L21 21M8 10l1.5 1.5L12 9',
+  lamp: 'M9 15h6m-5 3h4m-3 3h2M8 12a5 5 0 1 1 8 0l-1 3H9Zm4-11v2M3 8h2m14 0h2',
+  reflector: 'M4 20 16 4l4 3L8 23ZM3 8h6M4 3l5 2m9 8 3 3',
   snare: 'M12 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14Zm0 0v3m-3-9h6m-3-3v6m0 6h5',
   tent: 'M2 20 12 4l10 16ZM12 8v12m0-9-5 9m5-9 5 9M2 20h20',
   broken: 'M4 4h7l1 5-3 3 4 3-2 5H4Zm9 0h7v16h-6m2-11 2-1m-1 6h2',
